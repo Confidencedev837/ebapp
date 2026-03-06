@@ -27,6 +27,7 @@ export interface Profile {
     service_type: string | null;
     years_exp: number | null;
     verification_status: VerificationStatus;
+    onboarding_complete: boolean;
     phone: string | null;
     license_url: string | null;
     banner_url: string | null;

@@ -26,6 +26,7 @@ import { useThemeStore } from '@/store/useThemeStore';
 import { ThemeMode } from '@/types';
 import ThemedTextInput from '@/components/ThemedTextInput';
 import { useTheme } from '@/context/ThemeContext';
+import ProfileCompletionBanner from '@/components/ProfileCompletionBanner';
 
 const HomeScreen = () => {
     const { themeMode, toggleTheme } = useThemeStore();
@@ -134,6 +135,9 @@ const HomeScreen = () => {
      */
     const listHeader = useMemo(() => (
         <View style={{ backgroundColor: isDark ? COLORS.bgDark : COLORS.white }}>
+            {/* Profile Completion Warning */}
+            <ProfileCompletionBanner />
+
             {/* Upcoming Booking (Scrollable) */}
             {upcomingBooking && (
                 <View className="mb-4 mt-2">

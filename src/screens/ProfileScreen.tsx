@@ -10,6 +10,9 @@ import { useTheme } from '@/context/ThemeContext';
 import { useThemeStore } from '@/store/useThemeStore';
 import { getAvatarUrl } from '@/services/avatarUtils';
 import { useNavigation } from '@react-navigation/native';
+import { supabase } from '@/services/supabase';
+import { Alert } from 'react-native';
+import ProfileCompletionBanner from '@/components/ProfileCompletionBanner';
 
 const ProfileItem = ({
     icon,
@@ -97,6 +100,8 @@ const ProfileScreen = () => {
                     </TouchableOpacity>
                 </View>
 
+                <ProfileCompletionBanner />
+
                 {/* User Info */}
                 <View className="items-center py-6">
                     <View className="relative">
@@ -179,7 +184,26 @@ const ProfileScreen = () => {
                     </Text>
                     <ProfileItem icon="help-outline" label="Help Center" />
                     <ProfileItem icon="info-outline" label="About Everything Beauty" />
-                    <TouchableOpacity className="flex-row items-center py-6">
+                    <TouchableOpacity
+                        className="flex-row items-center py-6"
+                        onPress={async () => {
+                            Alert.alert(
+                                "Sign Out",
+                                "Are you sure you want to sign out?",
+                                [
+                                    { text: "Cancel", style: "cancel" },
+                                    {
+                                        text: "Sign Out",
+                                        style: "destructive",
+                                        onPress: async () => {
+                                            const { error } = await supabase.auth.signOut();
+                                            if (error) Alert.alert("Error", error.message);
+                                        }
+                                    }
+                                ]
+                            );
+                        }}
+                    >
                         <MaterialIcons name="logout" size={22} color="#EF4444" />
                         <Text className="ml-4 text-base" style={{ fontFamily: FONTS.sansBold, color: '#EF4444' }}>
                             Sign Out
