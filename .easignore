@@ -1,0 +1,9 @@
+# Ignore large folders that EAS doesn't need
+.git
+.vscode
+.github
+
+# Windows junction points that cause filename casing errors
+Desktop
+Local Settings
+My Documents
