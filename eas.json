@@ -15,6 +15,7 @@
     },
     "preview": {
       "distribution": "internal",
+      "buildType": "apk",
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://oldcuvmiwnvrtypnxwou.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_5_65_nDIk9Y8yLmK8-IOIg_OSQPGEMc",
