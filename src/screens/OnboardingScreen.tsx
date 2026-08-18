@@ -1,5 +1,5 @@
 // src/screens/OnboardingScreen.tsx - Multi-step onboarding for Agents and Customers
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
     View,
     Text,
@@ -19,27 +19,27 @@ import { useFonts, Montserrat_700Bold, Montserrat_800ExtraBold } from '@expo-goo
 import { PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { supabase, uploadToStorage, getPublicStorageUrl } from '../services/supabase';
+import { invalidateProfileCache } from '../services/api/profilesApi';
 import { useUserStore } from '../store/useUserStore';
 import { Profile } from '../types';
 import ThemedTextInput from '@/components/ThemedTextInput';
 
+import { CATEGORY_META } from '@/constants/categories';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const LOCATIONS = ['Victoria Island', 'Lekki', 'Surulere', 'Ikeja', 'Yaba', 'Ajah', 'Other'];
-const CATEGORIES = ['Makeup', 'Hair Styling', 'Nails', 'Spa & Massage', 'Bridal', 'Skincare', 'Barbing', 'Tattoos', 'Photography'];
-const SPECIALIZATIONS = [
-    { label: 'Makeup', icon: 'face-retouching-natural' },
-    { label: 'Hair Styling', icon: 'content-cut' },
-    { label: 'Nails', icon: 'back-hand' },
-    { label: 'Spa & Massage', icon: 'spa' },
-    { label: 'Bridal', icon: 'favorite' },
-    { label: 'Skincare', icon: 'face' },
-    { label: 'Barbing', icon: 'content-cut' },
-];
+const CATEGORIES = CATEGORY_META.map(c => c.key);
+const SPECIALIZATIONS = CATEGORY_META.filter(c => c.key !== 'Other').map(c => ({
+    label: c.key,
+    icon: c.icon,
+}));
 
 const OnboardingScreen = () => {
     const insets = useSafeAreaInsets();
     const profile = useUserStore((state) => state.profile);
+    const user = useUserStore((state) => state.user);
     const setProfile = useUserStore((state) => state.setProfile);
 
     const [fontsLoaded] = useFonts({
@@ -56,6 +56,10 @@ const OnboardingScreen = () => {
 
     const [step, setStep] = useState(0);
     const [finishLoading, setFinishLoading] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+
+    // Prevents duplicate submissions from rapid tapping
+    const isSubmitting = useRef(false);
 
     // State variables
     const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
@@ -132,10 +136,19 @@ const OnboardingScreen = () => {
     };
 
     const completeOnboarding = async (updates: Record<string, unknown>) => {
+        // Guard: reject if already in-flight
+        if (isSubmitting.current) {
+            console.log('[OnboardingScreen] Submission already in progress — ignoring duplicate tap');
+            return;
+        }
+
+        isSubmitting.current = true;
         setFinishLoading(true);
+        setSubmitError(null);
+
         try {
-            const userId = profile?.id;
-            if (!userId) throw new Error('No user ID found in profile');
+            const userId = user?.id || profile?.id;
+            if (!userId) throw new Error('No authenticated user found. Please sign in again.');
 
             console.log('[OnboardingScreen] Completing onboarding for:', userId, 'updates:', updates);
 
@@ -148,26 +161,42 @@ const OnboardingScreen = () => {
 
             if (error) {
                 console.error('[OnboardingScreen] Supabase update error:', error.message, error);
-                throw error;
+                // Surface the real error — do NOT fake success here
+                throw new Error(error.message || 'Failed to save your profile. Please try again.');
             }
 
             console.log('[OnboardingScreen] Onboarding complete — profile updated:', data);
+
+            // Invalidate the AsyncStorage profile cache so the next launch
+            // fetches fresh data (onboarding_complete: true) instead of the
+            // stale cached version that would show onboarding again.
+            await invalidateProfileCache(userId);
+
+            // Update in-memory store — this triggers RootNavigator to
+            // re-render and switch from <Onboarding> to <MainApp>.
             setProfile(data as Profile);
 
         } catch (err: unknown) {
+            const message =
+                err instanceof Error
+                    ? err.message
+                    : 'Something went wrong. Please check your connection and try again.';
+
             console.error('[OnboardingScreen] completeOnboarding error:', err);
-            if (profile) {
-                setProfile({ ...profile, onboarding_complete: true, ...updates } as Profile);
-            }
+
+            // Show the error to the user — keep them on the onboarding screen.
+            // Do NOT silently navigate away or fake success.
+            setSubmitError(message);
         } finally {
             setFinishLoading(false);
+            isSubmitting.current = false;
         }
     };
 
-    const handleSkip = async () => {
+    const handleSkip = useCallback(async () => {
         console.log('[OnboardingScreen] User skipped onboarding');
         await completeOnboarding({});
-    };
+    }, [profile]);
 
     const handleFinish = async () => {
         const updates: Record<string, unknown> = {
@@ -188,7 +217,7 @@ const OnboardingScreen = () => {
             const ext = extMatch?.[1]?.toLowerCase() || 'jpg';
             const lowerExt = ext.toLowerCase();
             const isVideo = ['mp4', 'mov', 'webm', 'mkv'].includes(lowerExt);
-            const userId = profile?.id;
+            const userId = user?.id || profile?.id;
             try {
                 if (!userId) throw new Error('No user ID found in profile');
                 const filename = `profiles/${userId}/portfolio-${Date.now()}.${ext}`;
@@ -209,10 +238,15 @@ const OnboardingScreen = () => {
             if (step === 0) return selectedLocation !== null;
             if (step === 1) return selectedCategories.length > 0;
         } else {
+            // Agent step order matches the rendered JSX:
+            //   Step 0: specialization
+            //   Step 1: location
+            //   Step 2: bio + years experience   ← was incorrectly returning true
+            //   Step 3: photo (optional)          ← was incorrectly checking bio here
             if (step === 0) return selectedSpecialization !== null;
             if (step === 1) return selectedLocation !== null;
-            if (step === 2) return true; // Photo is optional but encouraged
-            if (step === 3) return bio.trim().length > 10;
+            if (step === 2) return bio.trim().length > 10;
+            if (step === 3) return true; // Photo is optional but encouraged
         }
         return false;
     };
@@ -291,7 +325,7 @@ const OnboardingScreen = () => {
                                         onPress={() => setSelectedSpecialization(spec.label)}
                                         style={[styles.card, selectedSpecialization === spec.label ? styles.cardSelected : styles.cardUnselected]}
                                     >
-                                        <MaterialIcons
+                                        <MaterialCommunityIcons
                                             name={spec.icon as any}
                                             size={28}
                                             color={selectedSpecialization === spec.label ? '#FF6289' : '#6C757D'}
@@ -431,12 +465,48 @@ const OnboardingScreen = () => {
                 </ScrollView>
             </Animated.View>
 
+            {/* ── Error Banner ── */}
+            {submitError !== null && (
+                <View
+                    style={{
+                        marginHorizontal: 24,
+                        marginBottom: 8,
+                        padding: 12,
+                        borderRadius: 12,
+                        backgroundColor: '#FFF1F3',
+                        borderWidth: 1,
+                        borderColor: '#FFCDD6',
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                    }}
+                >
+                    <MaterialIcons name="error-outline" size={18} color="#E8314A" style={{ marginTop: 1 }} />
+                    <Text
+                        style={{
+                            flex: 1,
+                            fontFamily: 'DMSans_400Regular',
+                            fontSize: 13,
+                            color: '#C0192B',
+                            lineHeight: 18,
+                        }}
+                    >
+                        {submitError}
+                    </Text>
+                </View>
+            )}
+
             {/* ── Bottom Bar ── */}
             <View
                 className="flex-row items-center justify-between px-6"
                 style={{ paddingBottom: insets.bottom + 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E9ECEF', backgroundColor: '#FFFFFF' }}
             >
-                <TouchableOpacity onPress={handleSkip} style={{ paddingVertical: 12, paddingHorizontal: 8 }}>
+                {/* Skip — disabled while a submission is in flight to prevent concurrent requests */}
+                <TouchableOpacity
+                    onPress={handleSkip}
+                    disabled={finishLoading}
+                    style={{ paddingVertical: 12, paddingHorizontal: 8, opacity: finishLoading ? 0.4 : 1 }}
+                >
                     <Text style={{ fontFamily: 'DMSans_500Medium', color: '#6C757D', fontSize: 15 }}>Skip</Text>
                 </TouchableOpacity>
 
@@ -456,9 +526,9 @@ const OnboardingScreen = () => {
 
                 <TouchableOpacity
                     onPress={step === totalSteps - 1 ? handleFinish : () => goToStep(step + 1)}
-                    disabled={!canProceed()}
+                    disabled={!canProceed() || finishLoading}
                     style={{
-                        backgroundColor: canProceed() ? '#FF6289' : '#E9ECEF',
+                        backgroundColor: canProceed() && !finishLoading ? '#FF6289' : '#E9ECEF',
                         paddingVertical: 12,
                         paddingHorizontal: 24,
                         borderRadius: 100,
@@ -469,7 +539,7 @@ const OnboardingScreen = () => {
                     ) : (
                         <Text style={{
                             fontFamily: 'Montserrat_700Bold',
-                            color: canProceed() ? 'white' : '#6C757D',
+                            color: canProceed() && !finishLoading ? 'white' : '#6C757D',
                             fontSize: 14,
                         }}>
                             {step === totalSteps - 1 ? 'Finish' : 'Next'}

@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Booking } from '@/types';
 import * as bookingsApi from '@/services/api/bookingsApi';
+import { supabase } from '@/services/supabase';
 
 interface UseBookingsReturn {
   bookings: Booking[];
@@ -182,7 +183,29 @@ export const useUpcomingBookings = (customerId: string | null, daysAhead: number
 
   useEffect(() => {
     fetch();
-  }, [fetch]);
+
+    if (!customerId) return;
+
+    const channel = supabase
+      .channel(`upcoming-bookings-live-${customerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bookings',
+          filter: `customer_id=eq.${customerId}`,
+        },
+        () => {
+          fetch();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [fetch, customerId]);
 
   return { bookings, loading, error, refetch: fetch };
 };

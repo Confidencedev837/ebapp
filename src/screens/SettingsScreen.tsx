@@ -26,7 +26,7 @@ import AnimatedSection from '@/components/AnimatedSection';
 export const SettingsScreen = () => {
     const navigation = useNavigation<any>();
     const { theme } = useTheme();
-    const { mode, setThemeMode } = useThemeStore();
+    const { themeMode: mode, setThemeMode } = useThemeStore();
     const { profile, signOut } = useUserStore();
     const isDark = theme === 'dark';
 
@@ -99,7 +99,7 @@ export const SettingsScreen = () => {
                                 {profile?.full_name || 'Beauty User'}
                             </Text>
                             <Text style={[styles.profileEmail, { color: COLORS.textMuted }]}>
-                                {profile?.email || 'Tap to edit your profile details'}
+                                {profile?.phone || 'Tap to edit your profile details'}
                             </Text>
                             <View style={styles.editBadge}>
                                 <Text style={styles.editBadgeTxt}>Edit Profile</Text>

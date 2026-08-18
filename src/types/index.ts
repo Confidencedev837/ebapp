@@ -79,3 +79,18 @@ export interface Favorite {
     service_id: string;
     created_at: string;
 }
+
+export interface ServiceLike {
+    id: string;
+    user_id: string;
+    service_id: string;
+    created_at: string;
+}
+
+export interface ServiceShare {
+    id: string;
+    user_id: string;
+    service_id: string;
+    share_type: string | null;
+    created_at: string;
+}

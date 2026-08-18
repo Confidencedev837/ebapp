@@ -24,7 +24,12 @@ import { useUserStore } from '@/store/useUserStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { scheduleSystemPushNotification } from '@/services/notificationService';
 import { getAvatarUrl } from '@/services/avatarUtils';
+import { formatTime12Hour } from '@/utils/timeFormat';
+import EscrowStatusBadge from '@/components/EscrowStatusBadge';
+import BrandedSpinner from '@/components/BrandedSpinner';
 import Snackbar from '@/components/Snackbar';
+import ReviewModal from '@/components/ReviewModal';
+import { useHasReviewedBooking, useCreateReview } from '@/hooks/useReviews';
 import * as Haptics from 'expo-haptics';
 
 type RootStackParamList = { BookingDetail: { bookingId: string } };
@@ -59,9 +64,13 @@ const BookingDetailScreen = () => {
     const [booking, setBooking]       = useState<any>(null);
     const [loading, setLoading]       = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
+    const [reviewModalVisible, setReviewModalVisible] = useState(false);
     const [snackbar, setSnackbar]     = useState<{ visible: boolean; message: string; type: 'success' | 'error' | 'info' }>({
         visible: false, message: '', type: 'info',
     });
+
+    const { hasReviewed, refetch: refetchReviewStatus } = useHasReviewedBooking(bookingId);
+    const { createReview } = useCreateReview();
 
     // Determine user role relative to this booking
     const isCustomer = profile?.id === booking?.customer_id;
@@ -162,6 +171,23 @@ const BookingDetailScreen = () => {
         }
     };
 
+    const handleReviewSubmit = async (rating: number, comment: string) => {
+        try {
+            await createReview({
+                customerId: profile!.id,
+                serviceId: booking.services.id,
+                bookingId: bookingId,
+                rating,
+                comment,
+            });
+            setReviewModalVisible(false);
+            setSnackbar({ visible: true, message: 'Review submitted successfully!', type: 'success' });
+            refetchReviewStatus();
+        } catch (err: any) {
+            setSnackbar({ visible: true, message: err?.message || 'Failed to submit review', type: 'error' });
+        }
+    };
+
     // ── Confirm Completion & Release Payout to Agent ──────────────────────
     const handleConfirmCompletionAndPayout = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -212,7 +238,7 @@ const BookingDetailScreen = () => {
     if (loading) {
         return (
             <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="large" showLabel labelText="Loading appointment..." />
             </View>
         );
     }
@@ -284,7 +310,7 @@ const BookingDetailScreen = () => {
                 <View style={{ marginHorizontal: 20, marginTop: 16, borderRadius: RADIUS.lg, backgroundColor: card, borderWidth: 1, borderColor: border, ...SHADOWS.sm }}>
                     <Text style={{ fontFamily: FONTS.montserratBold, fontSize: FONT_SIZE.tiny, color: muted, letterSpacing: 3, textTransform: 'uppercase', margin: 16, marginBottom: 12 }}>Appointment</Text>
                     <DetailRow icon="event" label="Date" value={new Date(booking.date).toLocaleDateString('en-NG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} text={text} muted={muted} border={border} />
-                    <DetailRow icon="schedule" label="Time" value={booking.time} text={text} muted={muted} border={border} />
+                    <DetailRow icon="schedule" label="Time" value={formatTime12Hour(booking.time)} text={text} muted={muted} border={border} />
                     {booking.customer_notes && <DetailRow icon="notes" label="Special Requests" value={booking.customer_notes} text={text} muted={muted} border={border} />}
                 </View>
 
@@ -382,6 +408,28 @@ const BookingDetailScreen = () => {
                         </TouchableOpacity>
                     )}
 
+                    {/* CUSTOMER RATING */}
+                    {isCustomer && status === 'completed' && booking.escrow_status === 'released' && (
+                        <View style={{ marginTop: 8 }}>
+                            {hasReviewed ? (
+                                <View style={{ padding: 16, borderRadius: RADIUS.lg, backgroundColor: isDark ? '#2A2A2A' : '#F9FAFB', alignItems: 'center', borderWidth: 1, borderColor: border }}>
+                                    <Text style={{ fontFamily: FONTS.sansMedium, fontSize: FONT_SIZE.md, color: text, marginBottom: 8 }}>You have rated this service</Text>
+                                    <View style={{ flexDirection: 'row', gap: 4 }}>
+                                        {[...Array(5)].map((_, i) => <MaterialIcons key={i} name="star" size={20} color={COLORS.gold} />)}
+                                    </View>
+                                </View>
+                            ) : (
+                                <TouchableOpacity
+                                    onPress={() => setReviewModalVisible(true)}
+                                    style={{ padding: 16, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, ...SHADOWS.pink }}
+                                >
+                                    <MaterialIcons name="star-rate" size={22} color="#FFF" />
+                                    <Text style={{ fontFamily: FONTS.sansBold, fontSize: FONT_SIZE.md, color: '#FFF' }}>Rate this service</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
+
                     {canReport && (
                         <TouchableOpacity
                             onPress={() => handleUpdateStatus('no_show', 'No-show reported. Customer support notified.')}
@@ -421,6 +469,12 @@ const BookingDetailScreen = () => {
                 type={snackbar.type}
                 duration={4000}
                 onDismiss={() => setSnackbar(s => ({ ...s, visible: false }))}
+            />
+
+            <ReviewModal
+                visible={reviewModalVisible}
+                onClose={() => setReviewModalVisible(false)}
+                onSubmit={handleReviewSubmit}
             />
         </View>
     );

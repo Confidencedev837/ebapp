@@ -29,8 +29,13 @@ import { supabase } from '@/services/supabase';
 import Snackbar from '@/components/Snackbar';
 import { getAvatarUrl } from '@/services/avatarUtils';
 import { Service } from '@/types';
+import PaystackWebView from '@/components/PaystackWebView';
+import { createBooking } from '@/services/api/bookingsApi';
+import { formatTime12Hour } from '@/utils/timeFormat';
 
-type RootStackParamList = { Booking: { service: Service } };
+import BrandedSpinner from '@/components/BrandedSpinner';
+
+type RootStackParamList = { Booking: { service?: Service; serviceId?: string } };
 type BookingRouteProp = RouteProp<RootStackParamList, 'Booking'>;
 
 // ── Time slots shown to users ────────────────────────────────────────────────
@@ -68,7 +73,9 @@ const fetchBookedSlots = async (serviceId: string, date: string): Promise<string
 const BookingScreen = () => {
     const navigation = useNavigation<any>();
     const route = useRoute<BookingRouteProp>();
-    const { service } = route.params;
+    const passedService = route.params?.service;
+    const passedServiceId = route.params?.serviceId || passedService?.id;
+
     const { theme } = useTheme();
     const { profile } = useUserStore();
     const isDark = theme === 'dark';
@@ -82,12 +89,47 @@ const BookingScreen = () => {
     const muted  = isDark ? COLORS.textMutedDark : COLORS.textMuted;
     const border = isDark ? COLORS.borderDark  : COLORS.border;
 
+    // ── Service Resolution State ─────────────────────────────────────────
+    const [currentService, setCurrentService] = useState<Service | null>(passedService || null);
+    const [serviceLoading, setServiceLoading] = useState<boolean>(!passedService?.profiles && !!passedServiceId);
+
+    useEffect(() => {
+        if (!passedServiceId) return;
+        if (currentService?.profiles) {
+            setServiceLoading(false);
+            return;
+        }
+
+        let isMounted = true;
+        setServiceLoading(true);
+        supabase
+            .from('services')
+            .select('*, profiles!agent_id(*)')
+            .eq('id', passedServiceId)
+            .single()
+            .then(({ data, error }) => {
+                if (isMounted) {
+                    if (data) setCurrentService(data as Service);
+                    setServiceLoading(false);
+                }
+            })
+            .catch(() => {
+                if (isMounted) setServiceLoading(false);
+            });
+
+        return () => {
+            isMounted = false;
+        };
+    }, [passedServiceId]);
+
     // ── State ────────────────────────────────────────────────────────────
     const days = getDaysArray();
     const [selectedDate, setSelectedDate] = useState(days[0].date);
     const [selectedTime, setSelectedTime] = useState('');
     const [specialRequests, setSpecialRequests] = useState('');
-    const [paymentMethod, setPaymentMethod]     = useState<'card' | 'bank_transfer' | 'wallet'>('card');
+    const [paymentMethod, setPaymentMethod] = useState<'card' | 'bank_transfer' | 'wallet'>('card');
+    const [showPaystack, setShowPaystack] = useState(false);
+    const [paystackRef, setPaystackRef] = useState('');
     const [bookedSlots, setBookedSlots] = useState<string[]>([]);
     const [slotsLoading, setSlotsLoading] = useState(false);
     const [bookingLoading, setBookingLoading] = useState(false);
@@ -100,21 +142,22 @@ const BookingScreen = () => {
     const successScale   = useRef(new Animated.Value(0)).current;
     const successOpacity = useRef(new Animated.Value(0)).current;
 
-    const agent    = service.profiles;
+    const agent    = currentService?.profiles;
     const isAgent  = profile?.user_type === 'agent';
-    const total    = service.price;
+    const total    = currentService?.price || 0;
 
     // ── Load booked slots when date changes ──────────────────────────────
     useEffect(() => {
+        if (!currentService?.id) return;
         setSlotsLoading(true);
         setSelectedTime(''); // clear time when date changes
-        fetchBookedSlots(service.id, selectedDate)
+        fetchBookedSlots(currentService.id, selectedDate)
             .then(setBookedSlots)
             .catch(() => setBookedSlots([]))
             .finally(() => setSlotsLoading(false));
-    }, [selectedDate]);
+    }, [selectedDate, currentService?.id]);
 
-    // ── Create booking ────────────────────────────────────────────────────
+    // ── Step 1: Validate & Launch Paystack Checkout ───────────────────────
     const handleBook = async () => {
         if (!selectedTime) {
             setSnackbar({ visible: true, message: 'Please select a time slot', type: 'error' });
@@ -136,28 +179,45 @@ const BookingScreen = () => {
                 return;
             }
 
-            const { data, error } = await supabase
-                .from('bookings')
-                .insert({
-                    customer_id: profile?.id,
-                    service_id: service.id,
-                    agent_id: service.agent_id,
-                    date: selectedDate,
-                    time: selectedTime,
-                    status: 'pending',
-                    customer_notes: specialRequests || null,
-                    total_amount: total,
-                    escrow_status: 'held',
-                    payment_method: paymentMethod,
-                    payment_status: 'paid',
-                    created_at: new Date().toISOString(),
-                })
-                .select()
-                .single();
+            // Generate unique transaction reference for Paystack
+            const ref = `EB_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+            setPaystackRef(ref);
+            setShowPaystack(true);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Failed to initialize booking';
+            setSnackbar({ visible: true, message: msg, type: 'error' });
+        } finally {
+            setBookingLoading(false);
+        }
+    };
 
-            if (error) throw error;
+    // ── Step 2: Handle Successful Paystack Payment ────────────────────────
+    const handlePaymentSuccess = async (res: { reference: string }) => {
+        setShowPaystack(false);
+        setBookingLoading(true);
 
-            setNewBookingId(data.id);
+        try {
+            const confirmedRef = res.reference || paystackRef;
+
+            // Create verified booking in Supabase with real reference & escrow held
+            const created = await createBooking({
+                customer_id: profile?.id,
+                service_id: service.id,
+                agent_id: service.agent_id,
+                date: selectedDate,
+                time: selectedTime,
+                status: 'pending',
+                customer_notes: specialRequests || null,
+                total_amount: total,
+                escrow_status: 'held',
+                payment_method: paymentMethod,
+                payment_status: 'paid',
+                payment_reference: confirmedRef,
+                booking_reference: confirmedRef,
+                created_at: new Date().toISOString(),
+            });
+
+            setNewBookingId(created.id);
             setSubmitted(true);
 
             // Success animation, then navigate to BookingDetail
@@ -166,17 +226,49 @@ const BookingScreen = () => {
                 Animated.timing(successOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
             ]).start(() => {
                 setTimeout(() => {
-                    // Replace this screen — user shouldn't be able to "go back" to booking form after confirmation
-                    navigation.replace('BookingDetail', { bookingId: data.id });
-                }, 2000);
+                    navigation.replace('BookingDetail', { bookingId: created.id });
+                }, 1800);
             });
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Booking failed — please try again';
+            console.error('[BookingScreen] Create booking after payment error:', err);
+            const msg = err instanceof Error ? err.message : 'Payment succeeded but booking record failed. Contact support with ref: ' + (res.reference || paystackRef);
             setSnackbar({ visible: true, message: msg, type: 'error' });
         } finally {
             setBookingLoading(false);
         }
     };
+
+    const handlePaymentCancel = () => {
+        setShowPaystack(false);
+        setSnackbar({ visible: true, message: 'Payment cancelled. No charge was made.', type: 'info' });
+    };
+
+    // ── Guard: Service Loading ───────────────────────────────────────────
+    if (serviceLoading) {
+        return (
+            <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+                <BrandedSpinner size="large" showLabel labelText="Loading service details..." />
+            </View>
+        );
+    }
+
+    // ── Guard: Service Not Found ──────────────────────────────────────────
+    if (!currentService) {
+        return (
+            <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                <MaterialIcons name="error-outline" size={54} color={COLORS.textMuted} />
+                <Text style={{ fontFamily: FONTS.playfairBold, fontSize: 20, color: text, marginTop: 14 }}>Service not found</Text>
+                <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    style={{ marginTop: 20, paddingHorizontal: 24, paddingVertical: 10, backgroundColor: COLORS.primary, borderRadius: RADIUS.full }}
+                >
+                    <Text style={{ color: 'white', fontFamily: FONTS.sansBold }}>Go Back</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
+
+    const service = currentService;
 
     // ── Guard: agents cannot book ─────────────────────────────────────────
     if (isAgent) {
@@ -348,7 +440,7 @@ const BookingScreen = () => {
                                             color: isBooked ? muted : active ? COLORS.white : text,
                                             textDecorationLine: isBooked ? 'line-through' : 'none',
                                         }}>
-                                            {slot}
+                                            {formatTime12Hour(slot)}
                                         </Text>
                                     </TouchableOpacity>
                                 );
@@ -479,6 +571,21 @@ const BookingScreen = () => {
                     }
                 </TouchableOpacity>
             </View>
+
+            <PaystackWebView
+                visible={showPaystack}
+                amount={total}
+                email={profile?.email || user?.email || 'customer@everythingbeauty.ng'}
+                reference={paystackRef}
+                customerName={profile?.full_name || 'Customer'}
+                customerPhone={profile?.phone_number || ''}
+                onSuccess={handlePaymentSuccess}
+                onCancel={handlePaymentCancel}
+                onError={(err) => {
+                    setShowPaystack(false);
+                    setSnackbar({ visible: true, message: 'Payment error encountered. Please try again.', type: 'error' });
+                }}
+            />
 
             <Snackbar
                 visible={snackbar.visible}

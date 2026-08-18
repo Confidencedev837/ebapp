@@ -226,6 +226,7 @@ export interface Database {
           id: string;
           customer_id: string | null;
           service_id: string | null;
+          booking_id: string | null;
           rating: number | null;
           comment: string | null;
           created_at: string | null;
@@ -234,6 +235,7 @@ export interface Database {
           id?: string;
           customer_id?: string | null;
           service_id?: string | null;
+          booking_id?: string | null;
           rating?: number | null;
           comment?: string | null;
           created_at?: string | null;
@@ -242,6 +244,7 @@ export interface Database {
           id?: string;
           customer_id?: string | null;
           service_id?: string | null;
+          booking_id?: string | null;
           rating?: number | null;
           comment?: string | null;
           created_at?: string | null;
@@ -307,6 +310,49 @@ export interface Database {
           created_at?: string | null;
         };
       };
+      service_likes: {
+        Row: {
+          id: string;
+          user_id: string;
+          service_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          service_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          service_id?: string;
+          created_at?: string;
+        };
+      };
+      service_shares: {
+        Row: {
+          id: string;
+          user_id: string;
+          service_id: string;
+          share_type: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          service_id: string;
+          share_type?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          service_id?: string;
+          share_type?: string | null;
+          created_at?: string;
+        };
+      };
     };
   };
 }
@@ -344,3 +390,9 @@ export type WalletUpdate = Database['public']['Tables']['wallets']['Update'];
 export type FollowRow = Database['public']['Tables']['follows']['Row'];
 export type FollowInsert = Database['public']['Tables']['follows']['Insert'];
 export type FollowUpdate = Database['public']['Tables']['follows']['Update'];
+
+export type ServiceLikeRow = Database['public']['Tables']['service_likes']['Row'];
+export type ServiceLikeInsert = Database['public']['Tables']['service_likes']['Insert'];
+
+export type ServiceShareRow = Database['public']['Tables']['service_shares']['Row'];
+export type ServiceShareInsert = Database['public']['Tables']['service_shares']['Insert'];

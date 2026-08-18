@@ -19,10 +19,12 @@ import { fetchAgentRating } from '@/services/api/reviewsApi';
 import { getAvatarUrl } from '@/services/avatarUtils';
 import { Image } from 'expo-image';
 import { COLORS, FONTS, RADIUS, SHADOWS, SPACING } from '@/constants/theme';
+import { formatTime12Hour } from '@/utils/timeFormat';
 import { useTheme } from '@/context/ThemeContext';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import AnimatedSection from '@/components/AnimatedSection';
+import BrandedSpinner from '@/components/BrandedSpinner';
 
 const StatCard = ({
     title,
@@ -159,7 +161,7 @@ export const AgentDashboardScreen = () => {
     if (!user) {
         return (
             <SafeAreaView style={[styles.flex1Center, { backgroundColor: isDark ? COLORS.bgDark : COLORS.background }]}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="large" showLabel labelText="Loading dashboard..." />
             </SafeAreaView>
         );
     }
@@ -305,7 +307,7 @@ export const AgentDashboardScreen = () => {
                                 <View style={styles.scheduleTimeWrap}>
                                     <Ionicons name="time-outline" size={16} color={COLORS.primary} />
                                     <Text style={[styles.scheduleTimeTxt, { color: isDark ? COLORS.white : COLORS.textDark }]}>
-                                        {b.time || '10:00 AM'}
+                                        {formatTime12Hour(b.time) || '10:00 AM'}
                                     </Text>
                                 </View>
                                 <View style={styles.scheduleDetailsWrap}>

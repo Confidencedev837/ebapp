@@ -4,6 +4,21 @@ import { supabase } from '../supabase';
 import { ProfileRow, ProfileUpdate } from '@/types/supabase';
 
 const CACHE_KEY = 'profiles_cache';
+
+/**
+ * Explicitly remove a user's profile from the AsyncStorage cache.
+ * Call this whenever you write to the profiles table outside of updateProfile()
+ * (e.g. after onboarding completes) so the next app launch fetches fresh data.
+ */
+export const invalidateProfileCache = async (userId: string): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(`${CACHE_KEY}:${userId}`);
+    console.log('[profilesApi] Cache invalidated for user:', userId);
+  } catch (err) {
+    // Non-critical — worst case the cache is stale until TTL expires
+    console.warn('[profilesApi] Failed to invalidate profile cache:', err);
+  }
+};
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 interface CachedProfile {

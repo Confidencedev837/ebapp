@@ -15,6 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useThemeStore } from '@/store/useThemeStore';
 import { useUserStore } from '@/store/useUserStore';
 import { ThemeMode } from '@/types';
+import { shareProfile } from '@/utils/shareUtils';
 import * as Haptics from 'expo-haptics';
 
 interface ProfileTopMenuProps {
@@ -103,6 +104,25 @@ export const ProfileTopMenu: React.FC<ProfileTopMenuProps> = ({ onOpenSettings, 
                                 <Text style={[styles.menuHeader, { color: COLORS.textMuted }]}>
                                     Account & Settings
                                 </Text>
+
+                                {/* Share My Profile */}
+                                <TouchableOpacity
+                                    style={styles.menuItem}
+                                    onPress={() => {
+                                        setVisible(false);
+                                        const { profile } = useUserStore.getState();
+                                        shareProfile(profile);
+                                    }}
+                                    activeOpacity={0.7}
+                                >
+                                    <View style={[styles.iconWrap, { backgroundColor: isDark ? '#2C2C2E' : '#F3F4F6' }]}>
+                                        <MaterialIcons name="share" size={18} color={COLORS.primary} />
+                                    </View>
+                                    <Text style={[styles.menuItemText, { color: isDark ? COLORS.white : COLORS.textDark }]}>
+                                        Share My Profile
+                                    </Text>
+                                    <MaterialIcons name="chevron-right" size={18} color={COLORS.textMuted} />
+                                </TouchableOpacity>
 
                                 {/* Full Settings */}
                                 <TouchableOpacity

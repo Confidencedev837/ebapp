@@ -1,6 +1,5 @@
 // src/screens/ServicesScreen.tsx
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import AnimatedSection from '@/components/AnimatedSection';
 import {
     View,
     Text,
@@ -11,211 +10,307 @@ import {
     Dimensions,
     Pressable,
     TextInput,
+    ScrollView,
+    LayoutAnimation,
+    Platform,
+    UIManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { COLORS, FONTS, RADIUS, SHADOWS, SPACING } from '@/constants/theme';
+import { COLORS, FONTS, RADIUS, SHADOWS, UNIVERSAL_BLURHASH } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
-import CategoryChips from '@/components/CategoryChips';
 import Snackbar from '@/components/Snackbar';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Service } from '@/types';
-import { useServices } from '@/hooks/useServices';
-import { useSearchServices } from '@/hooks/useServices';
+import { useServices, useSearchServices } from '@/hooks/useServices';
+import { EmptyState } from '@/components/EmptyState';
+import { supabase } from '@/services/supabase';
+import { getAvatarUrl } from '@/services/avatarUtils';
+import BrandedSpinner from '@/components/BrandedSpinner';
+import { CATEGORY_META } from '@/constants/categories';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - 48) / 2;
-
-type ViewMode = 'grid' | 'list';
-type SortOption = 'recommended' | 'price_low' | 'price_high' | 'rating' | 'nearest';
-
+const TILE_GAP = 12;
+const TILE_WIDTH = (width - 48 - TILE_GAP) / 2;
 const RECENT_SEARCHES_KEY = '@eb_recent_searches';
-const AVAILABLE_BADGE_COLOR = '#22C55E'; // Green for "available" — since COLORS.positive doesn't exist
 
-// ─── Rich Service Card (Grid + List modes) ───────────────────────────────────
-const ServiceCard = ({
-    service,
-    viewMode,
-    index,
+type SortOption = 'recommended' | 'price_low' | 'price_high' | 'rating';
+
+// CATEGORY_META is now imported from @/constants/categories as CATEGORY_META
+// Do not define categories locally — always import from the single source of truth.
+
+// ── Featured Agents Hook ───────────────────────────────────────────────────────
+const useFeaturedAgents = () => {
+    const [agents, setAgents] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url, specialization, location, verification_status')
+            .eq('user_type', 'agent')
+            .limit(12)
+            .then(({ data }) => {
+                setAgents(data || []);
+                setLoading(false);
+            });
+    }, []);
+
+    return { agents, loading };
+};
+
+// ── Category Tile ──────────────────────────────────────────────────────────────
+const CategoryTile = React.memo(({
+    cat,
+    count,
+    onPress,
+    entranceDelay,
+    focusKey = 0,
 }: {
-    service: Service;
-    viewMode: ViewMode;
-    index: number;
+    cat: typeof CATEGORY_META[0];
+    count: number;
+    onPress: () => void;
+    entranceDelay: number;
+    focusKey?: number;
 }) => {
-    const navigation = useNavigation<any>();
-    const { theme } = useTheme();
-    const isDark = theme === 'dark';
-    const [saved, setSaved] = useState(false);
-    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const scaleAnim = useRef(new Animated.Value(0.85)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const translateY = useRef(new Animated.Value(24)).current;
+    const pressScale = useRef(new Animated.Value(1)).current;
 
-    const handlePress = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        navigation.navigate('ServiceDetail', { serviceId: service.id });
-    };
+    useEffect(() => {
+        scaleAnim.setValue(0.85);
+        opacityAnim.setValue(0);
+        translateY.setValue(24);
 
-    const handleSave = (e: any) => {
-        e.stopPropagation();
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        setSaved(!saved);
-    };
+        Animated.parallel([
+            Animated.spring(scaleAnim, {
+                toValue: 1,
+                delay: entranceDelay,
+                useNativeDriver: true,
+                friction: 6,
+                tension: 90,
+            }),
+            Animated.timing(opacityAnim, {
+                toValue: 1,
+                delay: entranceDelay,
+                duration: 280,
+                useNativeDriver: true,
+            }),
+            Animated.spring(translateY, {
+                toValue: 0,
+                delay: entranceDelay,
+                useNativeDriver: true,
+                friction: 7,
+                tension: 80,
+            }),
+        ]).start();
+    }, [focusKey]);
 
     const handlePressIn = () => {
-        Animated.spring(scaleAnim, {
-            toValue: 0.97,
+        Animated.spring(pressScale, {
+            toValue: 0.93,
             useNativeDriver: true,
-            friction: 8,
+            friction: 5,
+            tension: 140,
         }).start();
     };
 
     const handlePressOut = () => {
-        Animated.spring(scaleAnim, {
+        Animated.spring(pressScale, {
             toValue: 1,
             useNativeDriver: true,
-            friction: 5,
+            friction: 3,
+            tension: 80,
         }).start();
     };
 
-    const isAvailableToday = Math.random() > 0.3;
-    const distance = `${(Math.random() * 8 + 0.5).toFixed(1)} km`;
-    const duration = `${Math.floor(Math.random() * 90 + 30)} min`;
-    const reviewCount = Math.floor(Math.random() * 200 + 5);
-    const rating = (service as any).rating ?? 4.7; // Fallback since Service type doesn't have rating
-
-    if (viewMode === 'list') {
-        return (
-            <AnimatedSection delay={300 + index * 50} direction="up" distance={30}>
-            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-                <Pressable
-                    onPress={handlePress}
-                    onPressIn={handlePressIn}
-                    onPressOut={handlePressOut}
-                    style={{
-                        flexDirection: 'row',
-                        marginHorizontal: SPACING.screen,
-                        marginBottom: 12,
-                        padding: 12,
-                        backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
-                        borderRadius: RADIUS.lg,
-                        borderWidth: 1,
-                        borderColor: isDark ? COLORS.borderDark : COLORS.border,
-                        ...SHADOWS.sm,
-                    }}
-                >
-                    <View style={{ position: 'relative' }}>
-                        <Image
-                            source={{ uri: service.image_url[0] }}
-                            style={{ width: 100, height: 100, borderRadius: RADIUS.md }}
-                            contentFit="cover"
-                        />
-                        {isAvailableToday && (
-                            <View
-                                style={{
-                                    position: 'absolute',
-                                    top: 6,
-                                    left: 6,
-                                    backgroundColor: AVAILABLE_BADGE_COLOR + 'E6',
-                                    paddingHorizontal: 6,
-                                    paddingVertical: 2,
-                                    borderRadius: RADIUS.full,
-                                }}
-                            >
-                                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 9, color: '#fff' }}>
-                                    Available
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-
-                    <View style={{ flex: 1, marginLeft: 12, justifyContent: 'space-between' }}>
-                        <View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text
-                                    style={{
-                                        fontFamily: FONTS.montserratBold,
-                                        fontSize: 14,
-                                        color: isDark ? COLORS.white : COLORS.textDark,
-                                        flex: 1,
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {service.name}
-                                </Text>
-                                <TouchableOpacity onPress={handleSave} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                                    <Ionicons
-                                        name={saved ? 'heart' : 'heart-outline'}
-                                        size={18}
-                                        color={saved ? COLORS.primary : COLORS.textMuted}
-                                    />
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <MaterialIcons name="verified" size={12} color={COLORS.primary} />
-                                    <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 11, color: COLORS.primary, marginLeft: 2 }}>
-                                        Verified
-                                    </Text>
-                                </View>
-                                <Text style={{ color: COLORS.border, fontSize: 10 }}>•</Text>
-                                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted }}>
-                                    {service.profiles?.full_name}
-                                </Text>
-                            </View>
-
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 10 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                                    <MaterialIcons name="schedule" size={11} color={COLORS.textMuted} />
-                                    <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted }}>
-                                        {duration}
-                                    </Text>
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                                    <MaterialIcons name="place" size={11} color={COLORS.textMuted} />
-                                    <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted }}>
-                                        {distance}
-                                    </Text>
-                                </View>
-                            </View>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                            <Text style={{ fontFamily: FONTS.montserratBold, color: COLORS.primary, fontSize: 15 }}>
-                                ₦{service.price.toLocaleString()}
-                            </Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                <MaterialIcons name="star" size={13} color={COLORS.gold} />
-                                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 12, color: isDark ? COLORS.white : COLORS.textDark }}>
-                                    {rating.toFixed(1)}
-                                </Text>
-                                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted }}>
-                                    ({reviewCount})
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
-                </Pressable>
-            </Animated.View>
-            </AnimatedSection>
-        );
-    }
-
-    // ─── Grid Mode ───────────────────────────────────────────────────────────
     return (
-        <AnimatedSection delay={300 + index * 50} direction="up" distance={30} style={index % 2 === 0 ? { marginLeft: SPACING.screen } : { marginRight: SPACING.screen }}>
         <Animated.View
-            style={[
-                { transform: [{ scale: scaleAnim }], width: CARD_WIDTH },
-            ]}
+            style={{
+                opacity: opacityAnim,
+                transform: [
+                    { scale: Animated.multiply(scaleAnim, pressScale) },
+                    { translateY },
+                ],
+                width: TILE_WIDTH,
+                marginBottom: TILE_GAP,
+            }}
         >
             <Pressable
-                onPress={handlePress}
+                onPress={onPress}
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
+                style={{ borderRadius: RADIUS.xl, overflow: 'hidden', ...SHADOWS.md }}
+            >
+                <LinearGradient
+                    colors={cat.colors}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{ height: 134, justifyContent: 'flex-end', padding: 14 }}
+                >
+                    {/* Ghost icon for texture */}
+                    <View style={{ position: 'absolute', top: 12, right: 12, opacity: 0.22 }}>
+                        <MaterialCommunityIcons name={cat.icon as any} size={52} color="white" />
+                    </View>
+
+                    {/* Service count badge */}
+                    {count > 0 && (
+                        <View style={{
+                            position: 'absolute',
+                            top: 10,
+                            left: 10,
+                            backgroundColor: 'rgba(255,255,255,0.28)',
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: RADIUS.full,
+                        }}>
+                            <Text style={{ fontFamily: FONTS.sansBold, fontSize: 10, color: 'white' }}>
+                                {count}
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Bottom content */}
+                    <MaterialCommunityIcons name={cat.icon as any} size={24} color="white" style={{ marginBottom: 5 }} />
+                    <Text style={{ fontFamily: FONTS.montserratBold, fontSize: 14, color: 'white', letterSpacing: 0.2 }}>
+                        {cat.label}
+                    </Text>
+                </LinearGradient>
+            </Pressable>
+        </Animated.View>
+    );
+});
+
+// ── Featured Agent Card ────────────────────────────────────────────────────────
+const AgentCard = React.memo(({ agent, delay }: { agent: any; delay: number }) => {
+    const navigation = useNavigation<any>();
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
+    const entranceAnim = useRef(new Animated.Value(0)).current;
+    const entranceX = useRef(new Animated.Value(35)).current;
+    const pressScale = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.spring(entranceAnim, { toValue: 1, delay, useNativeDriver: true, friction: 7, tension: 70 }),
+            Animated.spring(entranceX, { toValue: 0, delay, useNativeDriver: true, friction: 7, tension: 70 }),
+        ]).start();
+    }, []);
+
+    return (
+        <Animated.View style={{ opacity: entranceAnim, transform: [{ translateX: entranceX }, { scale: pressScale }] }}>
+            <Pressable
+                onPress={() => navigation.navigate('AgentProfile', { agentId: agent.id })}
+                onPressIn={() => Animated.spring(pressScale, { toValue: 0.93, useNativeDriver: true, friction: 5, tension: 140 }).start()}
+                onPressOut={() => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, friction: 3, tension: 80 }).start()}
+                style={{ width: 90, marginRight: 16, alignItems: 'center' }}
+            >
+                <View style={{ position: 'relative', marginBottom: 7 }}>
+                    <View style={{
+                        width: 70,
+                        height: 70,
+                        borderRadius: 35,
+                        borderWidth: 2.5,
+                        borderColor: COLORS.roseMid,
+                        padding: 2,
+                    }}>
+                        <Image
+                            source={{ uri: getAvatarUrl(agent.full_name, agent.avatar_url) }}
+                            style={{ width: 62, height: 62, borderRadius: 31 }}
+                            contentFit="cover"
+                            placeholder={{ blurhash: UNIVERSAL_BLURHASH }}
+                        />
+                    </View>
+                    {agent.verification_status === 'verified' && (
+                        <View style={{
+                            position: 'absolute',
+                            bottom: 1,
+                            right: 1,
+                            backgroundColor: COLORS.primary,
+                            borderRadius: 10,
+                            width: 19,
+                            height: 19,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderWidth: 2,
+                            borderColor: isDark ? COLORS.bgDark : COLORS.background,
+                        }}>
+                            <MaterialIcons name="check" size={11} color="white" />
+                        </View>
+                    )}
+                </View>
+                <Text style={{ fontFamily: FONTS.sansBold, fontSize: 12, color: isDark ? COLORS.white : COLORS.textDark, textAlign: 'center' }} numberOfLines={1}>
+                    {agent.full_name?.split(' ')[0] || 'Agent'}
+                </Text>
+                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 10, color: COLORS.textMuted, textAlign: 'center', marginTop: 1 }} numberOfLines={1}>
+                    {agent.specialization || 'Beauty Pro'}
+                </Text>
+            </Pressable>
+        </Animated.View>
+    );
+});
+
+// ── Service List Card ──────────────────────────────────────────────────────────
+const ServiceListCard = React.memo(({ service, index, focusKey = 0 }: { service: Service; index: number; focusKey?: number }) => {
+    const navigation = useNavigation<any>();
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
+    const entranceAnim = useRef(new Animated.Value(0)).current;
+    const translateY = useRef(new Animated.Value(26)).current;
+    const pressScale = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        entranceAnim.setValue(0);
+        translateY.setValue(26);
+
+        Animated.parallel([
+            Animated.timing(entranceAnim, {
+                toValue: 1,
+                duration: 280,
+                delay: Math.min(index * 55, 380),
+                useNativeDriver: true,
+            }),
+            Animated.spring(translateY, {
+                toValue: 0,
+                delay: Math.min(index * 55, 380),
+                useNativeDriver: true,
+                friction: 8,
+                tension: 80,
+            }),
+        ]).start();
+    }, [focusKey, index]);
+
+    const firstImage = Array.isArray(service.image_url) ? service.image_url[0] : service.image_url;
+    const catInfo = CATEGORY_META.find(c => c.key === service.category);
+
+    return (
+        <Animated.View style={{
+            opacity: entranceAnim,
+            transform: [{ translateY }, { scale: pressScale }],
+            marginHorizontal: 24,
+            marginBottom: 12,
+        }}>
+            <Pressable
+                onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.navigate('ServiceDetail', { serviceId: service.id });
+                }}
+                onPressIn={() => Animated.spring(pressScale, { toValue: 0.97, useNativeDriver: true, friction: 6, tension: 130 }).start()}
+                onPressOut={() => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, friction: 3, tension: 70 }).start()}
                 style={{
-                    marginBottom: 16,
+                    flexDirection: 'row',
                     backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
                     borderRadius: RADIUS.lg,
                     borderWidth: 1,
@@ -224,505 +319,595 @@ const ServiceCard = ({
                     ...SHADOWS.sm,
                 }}
             >
+                {/* Thumbnail */}
                 <View style={{ position: 'relative' }}>
                     <Image
-                        source={{ uri: service.image_url[0] }}
-                        style={{ width: '100%', height: 140 }}
+                        source={{ uri: firstImage }}
+                        style={{ width: 105, height: 105 }}
                         contentFit="cover"
+                        placeholder={{ blurhash: UNIVERSAL_BLURHASH }}
+                        transition={400}
                     />
-                    <TouchableOpacity
-                        onPress={handleSave}
-                        style={{
-                            position: 'absolute',
-                            top: 8,
-                            right: 8,
-                            width: 28,
-                            height: 28,
-                            borderRadius: 14,
-                            backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                        hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                    >
-                        <Ionicons
-                            name={saved ? 'heart' : 'heart-outline'}
-                            size={14}
-                            color={saved ? COLORS.primary : isDark ? COLORS.white : COLORS.textDark}
+                    {/* Category color bar */}
+                    {catInfo && (
+                        <LinearGradient
+                            colors={[catInfo.colors[0] + 'CC', catInfo.colors[1] + '00']}
+                            start={{ x: 0, y: 1 }}
+                            end={{ x: 0, y: 0 }}
+                            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 32 }}
                         />
-                    </TouchableOpacity>
-
-                    {isAvailableToday && (
-                        <View
-                            style={{
-                                position: 'absolute',
-                                bottom: 8,
-                                left: 8,
-                                backgroundColor: AVAILABLE_BADGE_COLOR + 'E6',
-                                paddingHorizontal: 8,
-                                paddingVertical: 3,
-                                borderRadius: RADIUS.full,
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 4,
-                            }}
-                        >
-                            <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#fff' }} />
-                            <Text style={{ fontFamily: FONTS.sansBold, fontSize: 10, color: '#fff' }}>
-                                Available today
-                            </Text>
-                        </View>
                     )}
                 </View>
 
-                <View style={{ padding: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                        <MaterialIcons name="verified" size={11} color={COLORS.primary} />
-                        <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 10, color: COLORS.primary }}>
-                            Verified
+                {/* Content */}
+                <View style={{ flex: 1, padding: 12, justifyContent: 'space-between' }}>
+                    <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                            {service.profiles?.verification_status === 'verified' && (
+                                <MaterialIcons name="verified" size={11} color={COLORS.primary} />
+                            )}
+                            <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted, flex: 1 }} numberOfLines={1}>
+                                {service.profiles?.full_name}
+                            </Text>
+                        </View>
+                        <Text style={{ fontFamily: FONTS.montserratBold, fontSize: 14, color: isDark ? COLORS.white : COLORS.textDark, marginBottom: 4 }} numberOfLines={2}>
+                            {service.name}
                         </Text>
+                        {service.duration_mins && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <MaterialIcons name="schedule" size={11} color={COLORS.textMuted} />
+                                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted }}>
+                                    {service.duration_mins} min
+                                </Text>
+                            </View>
+                        )}
                     </View>
 
-                    <Text
-                        style={{ fontFamily: FONTS.montserratBold, fontSize: 13, color: isDark ? COLORS.white : COLORS.textDark, marginBottom: 2 }}
-                        numberOfLines={1}
-                    >
-                        {service.name}
-                    </Text>
-
-                    <Text
-                        style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}
-                        numberOfLines={1}
-                    >
-                        {service.profiles?.full_name}
-                    </Text>
-
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ fontFamily: FONTS.montserratBold, color: COLORS.primary, fontSize: 14 }}>
-                            ₦{service.price.toLocaleString()}
+                        <Text style={{ fontFamily: FONTS.montserratBold, fontSize: 15, color: COLORS.primary }}>
+                            {'\u20A6'}{service.price.toLocaleString()}
                         </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                        <View style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 3,
+                            backgroundColor: isDark ? COLORS.bgDark : COLORS.blush,
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: RADIUS.full,
+                        }}>
                             <MaterialIcons name="star" size={11} color={COLORS.gold} />
                             <Text style={{ fontFamily: FONTS.sansBold, fontSize: 11, color: isDark ? COLORS.white : COLORS.textDark }}>
-                                {rating.toFixed(1)}
+                                {((service as any).rating ?? 4.8).toFixed(1)}
                             </Text>
                         </View>
                     </View>
                 </View>
             </Pressable>
         </Animated.View>
-        </AnimatedSection>
     );
-};
+});
 
-// ─── Sort Bottom Sheet ──────────────────────────────────────────────────────
-const SortSheet = ({
-    visible,
-    current,
-    onSelect,
-    onClose,
-    isDark,
-}: {
-    visible: boolean;
-    current: SortOption;
-    onSelect: (s: SortOption) => void;
-    onClose: () => void;
-    isDark: boolean;
-}) => {
-    const slideAnim = useRef(new Animated.Value(300)).current;
-    const fadeAnim = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        if (visible) {
-            Animated.parallel([
-                Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-                Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, friction: 8 }),
-            ]).start();
-        } else {
-            Animated.parallel([
-                Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
-                Animated.timing(slideAnim, { toValue: 300, duration: 200, useNativeDriver: true }),
-            ]).start();
-        }
-    }, [visible]);
-
-    if (!visible) return null;
-
-    const options: { key: SortOption; label: string; icon: string }[] = [
-        { key: 'recommended', label: 'Recommended', icon: 'thumb-up' },
-        { key: 'price_low', label: 'Price: Low to High', icon: 'arrow-downward' },
-        { key: 'price_high', label: 'Price: High to Low', icon: 'arrow-upward' },
-        { key: 'rating', label: 'Top Rated', icon: 'star' },
-        { key: 'nearest', label: 'Nearest First', icon: 'place' },
-    ];
-
-    return (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }}>
-            <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', opacity: fadeAnim }}>
-                <Pressable style={{ flex: 1 }} onPress={onClose} />
-            </Animated.View>
-
-            <Animated.View
-                style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
-                    borderTopLeftRadius: RADIUS.xl,
-                    borderTopRightRadius: RADIUS.xl,
-                    paddingTop: 12,
-                    paddingBottom: 32,
-                    transform: [{ translateY: slideAnim }],
-                }}
-            >
-                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? COLORS.borderDark : COLORS.border, alignSelf: 'center', marginBottom: 16 }} />
-                <Text style={{ fontFamily: FONTS.montserratBold, fontSize: 18, color: isDark ? COLORS.white : COLORS.textDark, textAlign: 'center', marginBottom: 16 }}>
-                    Sort by
-                </Text>
-
-                {options.map((opt) => (
-                    <TouchableOpacity
-                        key={opt.key}
-                        onPress={() => {
-                            Haptics.selectionAsync();
-                            onSelect(opt.key);
-                            onClose();
-                        }}
-                        style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            paddingHorizontal: 24,
-                            paddingVertical: 14,
-                            backgroundColor: current === opt.key ? (isDark ? COLORS.primary + '15' : COLORS.blush) : 'transparent',
-                        }}
-                    >
-                        <MaterialIcons name={opt.icon as any} size={20} color={current === opt.key ? COLORS.primary : COLORS.textMuted} />
-                        <Text
-                            style={{
-                                fontFamily: current === opt.key ? FONTS.sansBold : FONTS.sansRegular,
-                                fontSize: 15,
-                                color: current === opt.key ? COLORS.primary : isDark ? COLORS.white : COLORS.textDark,
-                                marginLeft: 16,
-                            }}
-                        >
-                            {opt.label}
-                        </Text>
-                        {current === opt.key && (
-                            <MaterialIcons name="check" size={20} color={COLORS.primary} style={{ marginLeft: 'auto' }} />
-                        )}
-                    </TouchableOpacity>
-                ))}
-            </Animated.View>
-        </View>
-    );
-};
-
-// ─── Main Screen ─────────────────────────────────────────────────────────────
+// ── Main Screen ────────────────────────────────────────────────────────────────
 const ServicesScreen = () => {
     const { theme } = useTheme();
     const isDark = theme === 'dark';
+
+    // ── State ─────────────────────────────────────────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
     const [activeCategory, setActiveCategory] = useState('All');
-    const [viewMode, setViewMode] = useState<ViewMode>('grid');
     const [sortBy, setSortBy] = useState<SortOption>('recommended');
-    const [showSort, setShowSort] = useState(false);
+    const [showGrid, setShowGrid] = useState(true);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [showRecents, setShowRecents] = useState(false);
-    const searchInputRef = useRef<TextInput>(null);
-    
-    // ── API state ───────────────────────────────────────────────────────────
-    const { services, error: servicesError } = useServices();
-    const { results: searchResults, loading: searchLoading, error: searchError, search } = useSearchServices();
     const [snackbar, setSnackbar] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' | 'info' });
-    
-    useEffect(() => {
-        if (servicesError || searchError) {
-            setSnackbar({ visible: true, message: servicesError || searchError || 'Error', type: 'error' });
-        }
-    }, [servicesError, searchError]);
+    const searchInputRef = useRef<TextInput>(null);
 
-    // Load recent searches
+    // ── Animation values ──────────────────────────────────────────────────────
+    const headerAnim = useRef(new Animated.Value(0)).current;
+    const gridOpacity = useRef(new Animated.Value(1)).current;
+    const chipEntranceAnim = useRef(new Animated.Value(0)).current;
+    const chipTranslateY = useRef(new Animated.Value(-14)).current;
+    const searchFocusAnim = useRef(new Animated.Value(0)).current;
+    const filterChipsEntrance = useRef(new Animated.Value(0)).current;
+    const filterChipsTranslate = useRef(new Animated.Value(10)).current;
+
+    // ── API hooks ─────────────────────────────────────────────────────────────
+    const { services, loading, loadingMore, hasMore, loadMore, error: servicesError } = useServices({
+        category: activeCategory === 'All' ? undefined : activeCategory,
+    });
+    const { results: searchResults, search } = useSearchServices();
+    const { agents } = useFeaturedAgents();
+
+    const [focusCount, setFocusCount] = useState(0);
+
+    // ── Animate every time the user navigates / focuses this screen ──────────
+    useFocusEffect(
+        useCallback(() => {
+            headerAnim.setValue(0);
+            Animated.spring(headerAnim, {
+                toValue: 1,
+                useNativeDriver: true,
+                friction: 6,
+                tension: 65,
+            }).start();
+
+            setFocusCount((c) => c + 1);
+        }, [])
+    );
+
+    useEffect(() => {
+        if (servicesError) setSnackbar({ visible: true, message: servicesError, type: 'error' });
+    }, [servicesError]);
+
     useEffect(() => {
         AsyncStorage.getItem(RECENT_SEARCHES_KEY).then((data) => {
             if (data) setRecentSearches(JSON.parse(data));
         });
     }, []);
-    
-    // Trigger search when query changes
+
     useEffect(() => {
-        if (searchQuery.trim()) {
-            search(searchQuery);
-        }
+        if (searchQuery.trim()) search(searchQuery);
     }, [searchQuery, search]);
 
-    const saveSearch = useCallback(async (query: string) => {
-        if (!query.trim()) return;
-        const updated = [query, ...recentSearches.filter((s) => s !== query)].slice(0, 8);
+    const saveSearch = useCallback(async (q: string) => {
+        if (!q.trim()) return;
+        const updated = [q, ...recentSearches.filter((s) => s !== q)].slice(0, 6);
         setRecentSearches(updated);
         await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
     }, [recentSearches]);
 
-    const filteredServices = useMemo(() => {
-        // Use search results if query exists, otherwise use services from API
-        let result = searchQuery.trim() ? searchResults : services;
-        
-        // Filter by category
-        if (activeCategory !== 'All') {
-            result = result.filter(s => s.category === activeCategory);
-        }
+    // ── Category press: grid collapses, chip slides in ────────────────────────
+    const handleCategoryPress = useCallback((key: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        filterChipsEntrance.setValue(0);
+        filterChipsTranslate.setValue(10);
 
-        switch (sortBy) {
-            case 'price_low':
-                result = [...result].sort((a, b) => a.price - b.price);
-                break;
-            case 'price_high':
-                result = [...result].sort((a, b) => b.price - a.price);
-                break;
-            case 'rating':
-                result = [...result].sort((a, b) => ((b as any).rating || 0) - ((a as any).rating || 0));
-                break;
-            case 'nearest':
-                result = [...result].sort(() => Math.random() - 0.5);
-                break;
-            default:
-                break;
-        }
+        Animated.timing(gridOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+            LayoutAnimation.configureNext({
+                duration: 340,
+                update: { type: 'spring', springDamping: 0.82 },
+                delete: { type: 'easeOut', property: 'opacity', duration: 200 },
+            });
+            setShowGrid(false);
+            setActiveCategory(key);
+            chipTranslateY.setValue(-14);
+            chipEntranceAnim.setValue(0);
 
-        return result;
-    }, [searchQuery, activeCategory, sortBy, searchResults, services]);
-
-    const handleCategorySelect = useCallback((category: string) => {
-        Haptics.selectionAsync();
-        setActiveCategory(category);
+            Animated.parallel([
+                Animated.spring(chipEntranceAnim, { toValue: 1, useNativeDriver: true, friction: 7, tension: 80 }),
+                Animated.spring(chipTranslateY, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }),
+                // Stagger the filter chips in
+                Animated.sequence([
+                    Animated.delay(80),
+                    Animated.parallel([
+                        Animated.spring(filterChipsEntrance, { toValue: 1, useNativeDriver: true, friction: 7, tension: 80 }),
+                        Animated.spring(filterChipsTranslate, { toValue: 0, useNativeDriver: true, friction: 7, tension: 80 }),
+                    ]),
+                ]),
+            ]).start();
+        });
     }, []);
 
-    const handleSearchSubmit = () => {
-        if (searchQuery.trim()) {
-            search(searchQuery);
-            saveSearch(searchQuery);
-            setShowRecents(false);
+    // ── Clear category: chip fades out, grid slides back in ──────────────────
+    const handleClearCategory = useCallback(() => {
+        Haptics.selectionAsync();
+        Animated.parallel([
+            Animated.timing(chipEntranceAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
+            Animated.timing(filterChipsEntrance, { toValue: 0, duration: 120, useNativeDriver: true }),
+        ]).start(() => {
+            chipTranslateY.setValue(-14);
+            gridOpacity.setValue(0);
+            LayoutAnimation.configureNext({
+                duration: 340,
+                update: { type: 'spring', springDamping: 0.82 },
+                create: { type: 'spring', property: 'opacity', springDamping: 0.82 },
+            });
+            setShowGrid(true);
+            setActiveCategory('All');
+            setSortBy('recommended');
+            Animated.spring(gridOpacity, { toValue: 1, useNativeDriver: true, friction: 6, tension: 55, delay: 80 }).start();
+        });
+    }, []);
+
+    // ── Filtered + sorted services ────────────────────────────────────────────
+    const displayServices = useMemo(() => {
+        const base = searchQuery.trim() ? searchResults : services;
+        switch (sortBy) {
+            case 'price_low':  return [...base].sort((a, b) => a.price - b.price);
+            case 'price_high': return [...base].sort((a, b) => b.price - a.price);
+            case 'rating':     return [...base].sort((a, b) => ((b as any).rating || 0) - ((a as any).rating || 0));
+            default:           return base;
         }
-    };
+    }, [searchQuery, sortBy, searchResults, services]);
 
-    const clearSearch = () => {
-        setSearchQuery('');
-        setShowRecents(false);
-        searchInputRef.current?.blur();
-    };
+    // ── Category service counts ───────────────────────────────────────────────
+    const categoryCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        services.forEach((s) => {
+            if (s.category) counts[s.category] = (counts[s.category] || 0) + 1;
+        });
+        return counts;
+    }, [services]);
 
-    const sortLabel: Record<SortOption, string> = {
-        recommended: 'Recommended',
-        price_low: 'Price: Low - High',
-        price_high: 'Price: High - Low',
-        rating: 'Top Rated',
-        nearest: 'Nearest',
-    };
+    const activeCatInfo = CATEGORY_META.find((c) => c.key === activeCategory);
 
+    // ── Sort chip data ────────────────────────────────────────────────────────
+    const SORT_OPTIONS: { key: SortOption; label: string; icon: string }[] = [
+        { key: 'recommended', label: 'Recommended', icon: 'star-circle-outline' },
+        { key: 'price_low',   label: 'Price: Low',  icon: 'trending-down' },
+        { key: 'price_high',  label: 'Price: High', icon: 'trending-up' },
+        { key: 'rating',      label: 'Top Rated',   icon: 'star-outline' },
+    ];
+
+    // ── List Header ───────────────────────────────────────────────────────────
+    const ListHeaderComponent = (
+        <View>
+            {/* Category Grid */}
+            {showGrid && (
+                <Animated.View style={{ opacity: gridOpacity, paddingHorizontal: 24, paddingTop: 18 }}>
+                    <Text style={{
+                        fontFamily: FONTS.sansBold,
+                        fontSize: 11,
+                        color: COLORS.textMuted,
+                        textTransform: 'uppercase',
+                        letterSpacing: 1.4,
+                        marginBottom: 14,
+                    }}>
+                        Browse by category
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: TILE_GAP }}>
+                        {CATEGORY_META.map((cat, i) => (
+                            <CategoryTile
+                                key={cat.key}
+                                cat={cat}
+                                count={categoryCounts[cat.key] || 0}
+                                onPress={() => handleCategoryPress(cat.key)}
+                                entranceDelay={70 + i * 48}
+                                focusKey={focusCount}
+                            />
+                        ))}
+                    </View>
+                </Animated.View>
+            )}
+
+            {/* Active Category Chip + Filter Chips (visible after category selected) */}
+            {!showGrid && activeCategory !== 'All' && (
+                <View style={{ paddingHorizontal: 24, paddingTop: 18 }}>
+                    {/* Selected category pill */}
+                    <Animated.View style={{
+                        opacity: chipEntranceAnim,
+                        transform: [{ translateY: chipTranslateY }],
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginBottom: 16,
+                    }}>
+                        <TouchableOpacity
+                            onPress={handleClearCategory}
+                            activeOpacity={0.8}
+                            style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 7,
+                                paddingHorizontal: 14,
+                                paddingVertical: 9,
+                                backgroundColor: activeCatInfo?.colors[0] ?? COLORS.primary,
+                                borderRadius: RADIUS.full,
+                                ...SHADOWS.pink,
+                            }}
+                        >
+                            <MaterialCommunityIcons
+                                name={(activeCatInfo?.icon ?? 'grid') as any}
+                                size={15}
+                                color="white"
+                            />
+                            <Text style={{ fontFamily: FONTS.sansBold, fontSize: 13, color: 'white' }}>
+                                {activeCatInfo?.label ?? activeCategory}
+                            </Text>
+                            <MaterialIcons name="close" size={14} color="rgba(255,255,255,0.75)" />
+                        </TouchableOpacity>
+
+                        <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 12, color: COLORS.textMuted, marginLeft: 12 }}>
+                            {displayServices.length} result{displayServices.length !== 1 ? 's' : ''}
+                        </Text>
+                    </Animated.View>
+
+                    {/* Filter chips */}
+                    <Animated.View style={{
+                        opacity: filterChipsEntrance,
+                        transform: [{ translateY: filterChipsTranslate }],
+                        marginBottom: 16,
+                    }}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            {SORT_OPTIONS.map((opt) => {
+                                const isActive = sortBy === opt.key;
+                                return (
+                                    <TouchableOpacity
+                                        key={opt.key}
+                                        onPress={() => { Haptics.selectionAsync(); setSortBy(opt.key); }}
+                                        activeOpacity={0.75}
+                                        style={{
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            gap: 5,
+                                            paddingHorizontal: 13,
+                                            paddingVertical: 8,
+                                            marginRight: 8,
+                                            borderRadius: RADIUS.full,
+                                            backgroundColor: isActive
+                                                ? (isDark ? COLORS.primary + '22' : COLORS.blush)
+                                                : (isDark ? COLORS.surfaceDark : COLORS.white),
+                                            borderWidth: 1,
+                                            borderColor: isActive ? COLORS.primary : (isDark ? COLORS.borderDark : COLORS.border),
+                                        }}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name={opt.icon as any}
+                                            size={13}
+                                            color={isActive ? COLORS.primary : COLORS.textMuted}
+                                        />
+                                        <Text style={{
+                                            fontFamily: isActive ? FONTS.sansBold : FONTS.sansRegular,
+                                            fontSize: 12,
+                                            color: isActive ? COLORS.primary : COLORS.textMuted,
+                                        }}>
+                                            {opt.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                    </Animated.View>
+
+                    {/* Divider */}
+                    <View style={{ height: 1, backgroundColor: isDark ? COLORS.borderDark : COLORS.border, marginBottom: 16 }} />
+                </View>
+            )}
+
+            {/* Featured Specialists strip (only in browse mode) */}
+            {showGrid && agents.length > 0 && (
+                <View style={{ paddingTop: 6, paddingBottom: 6 }}>
+                    <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingHorizontal: 24,
+                        marginBottom: 16,
+                    }}>
+                        <Text style={{
+                            fontFamily: FONTS.sansBold,
+                            fontSize: 11,
+                            color: COLORS.textMuted,
+                            textTransform: 'uppercase',
+                            letterSpacing: 1.4,
+                        }}>
+                            Featured Specialists
+                        </Text>
+                    </View>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 4 }}
+                    >
+                        {agents.map((agent, i) => (
+                            <AgentCard key={agent.id} agent={agent} delay={i * 65} />
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
+            {/* All services header */}
+            {showGrid && (
+                <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingHorizontal: 24,
+                    paddingTop: 18,
+                    paddingBottom: 14,
+                    marginTop: 8,
+                    borderTopWidth: 1,
+                    borderTopColor: isDark ? COLORS.borderDark : COLORS.border,
+                }}>
+                    <Text style={{
+                        fontFamily: FONTS.sansBold,
+                        fontSize: 11,
+                        color: COLORS.textMuted,
+                        textTransform: 'uppercase',
+                        letterSpacing: 1.4,
+                    }}>
+                        All Services
+                    </Text>
+                    <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 12, color: COLORS.textMuted }}>
+                        {displayServices.length} available
+                    </Text>
+                </View>
+            )}
+        </View>
+    );
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? COLORS.bgDark : COLORS.background }} edges={['top']}>
-        <View style={{ flex: 1, overflow: 'hidden' }}>
+        <SafeAreaView
+            style={{ flex: 1, backgroundColor: isDark ? COLORS.bgDark : COLORS.background }}
+            edges={['top']}
+        >
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-            {/* Header */}
-            <AnimatedSection delay={0} direction="down" distance={20} style={{ paddingHorizontal: 24, paddingTop: 16, paddingBottom: 8 }}>
-                <Text className="text-3xl" style={{ fontFamily: FONTS.playfairBold, color: isDark ? COLORS.white : COLORS.textDark }}>
-                    Discover
+            {/* ── Header ───────────────────────────────────────────────────────── */}
+            <Animated.View style={{
+                opacity: headerAnim,
+                transform: [{
+                    translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-18, 0] }),
+                }],
+                paddingHorizontal: 24,
+                paddingTop: 16,
+                paddingBottom: 14,
+            }}>
+                <Text style={{
+                    fontFamily: FONTS.playfairBold,
+                    fontSize: 32,
+                    color: isDark ? COLORS.white : COLORS.textDark,
+                    letterSpacing: 0.2,
+                }}>
+                    Explore
                 </Text>
-                <Text className="text-sm mt-1" style={{ fontFamily: FONTS.sansRegular, color: COLORS.textMuted }}>
-                    {filteredServices.length} specialist{filteredServices.length !== 1 ? 's' : ''} available
+                <Text style={{
+                    fontFamily: FONTS.sansRegular,
+                    fontSize: 13,
+                    color: COLORS.textMuted,
+                    marginTop: 2,
+                }}>
+                    Find the perfect beauty specialist
                 </Text>
-            </AnimatedSection>
+            </Animated.View>
 
-            {/* Sticky Search & Categories */}
-            <AnimatedSection delay={100} direction="down" distance={20} style={{ paddingTop: 16, borderBottomWidth: 1, backgroundColor: isDark ? COLORS.bgDark : COLORS.background, borderColor: isDark ? COLORS.borderDark : COLORS.border }}>
-                <View className="px-6 mb-3">
-                    <View
-                        className="flex-row items-center px-4 py-3 border"
+            {/* ── Search Bar ────────────────────────────────────────────────────── */}
+            <Animated.View style={{
+                opacity: headerAnim,
+                paddingHorizontal: 24,
+                paddingBottom: 12,
+                zIndex: 10,
+            }}>
+                <Animated.View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
+                    borderRadius: RADIUS.full,
+                    borderWidth: 1.5,
+                    borderColor: searchFocusAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [isDark ? COLORS.borderDark : COLORS.border, COLORS.primary],
+                    }),
+                    ...SHADOWS.sm,
+                }}>
+                    <MaterialIcons name="search" size={20} color={COLORS.textMuted} />
+                    <TextInput
+                        ref={searchInputRef}
+                        placeholder="Search services, styles..."
                         style={{
-                            backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
-                            borderColor: isDark ? COLORS.borderDark : COLORS.border,
-                            borderRadius: RADIUS.full,
+                            flex: 1,
+                            marginLeft: 10,
+                            fontFamily: FONTS.sansRegular,
+                            fontSize: 14,
+                            color: isDark ? COLORS.white : COLORS.textDark,
                         }}
-                    >
-                        <MaterialIcons name="search" size={20} color={COLORS.textMuted} />
-                        <TextInput
-                            ref={searchInputRef}
-                            placeholder="Search services, artists, styles..."
-                            className="flex-1 ml-3 text-sm"
-                            style={{ fontFamily: FONTS.sansRegular, color: isDark ? COLORS.white : COLORS.textDark }}
-                            placeholderTextColor={COLORS.textMuted}
-                            value={searchQuery}
-                            onChangeText={(text: string) => {
-                                setSearchQuery(text);
-                                setShowRecents(text.length === 0 && recentSearches.length > 0);
-                            }}
-                            onFocus={() => {
-                                if (searchQuery.length === 0 && recentSearches.length > 0) {
-                                    setShowRecents(true);
-                                }
-                            }}
-                            onSubmitEditing={handleSearchSubmit}
-                            returnKeyType="search"
-                        />
-                        {searchQuery.length > 0 ? (
-                            <TouchableOpacity onPress={clearSearch}>
-                                <MaterialIcons name="close" size={18} color={COLORS.textMuted} />
-                            </TouchableOpacity>
-                        ) : (
-                            <TouchableOpacity
-                                onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setShowSort(true);
-                                }}
-                            >
-                                <MaterialIcons name="tune" size={18} color={COLORS.primary} />
-                            </TouchableOpacity>
-                        )}
-                    </View>
-                </View>
+                        placeholderTextColor={COLORS.textMuted}
+                        value={searchQuery}
+                        onChangeText={(text) => {
+                            setSearchQuery(text);
+                            setShowRecents(text.length === 0 && recentSearches.length > 0);
+                        }}
+                        onFocus={() => {
+                            Animated.spring(searchFocusAnim, { toValue: 1, useNativeDriver: false, friction: 7, tension: 80 }).start();
+                            if (!searchQuery && recentSearches.length > 0) setShowRecents(true);
+                        }}
+                        onBlur={() => {
+                            Animated.timing(searchFocusAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+                            setTimeout(() => setShowRecents(false), 150);
+                        }}
+                        onSubmitEditing={() => {
+                            if (searchQuery.trim()) { search(searchQuery); saveSearch(searchQuery); setShowRecents(false); }
+                        }}
+                        returnKeyType="search"
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => { setSearchQuery(''); setShowRecents(false); searchInputRef.current?.blur(); }}>
+                            <MaterialIcons name="close" size={18} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                    )}
+                </Animated.View>
 
-                {/* Recent Searches Dropdown */}
+                {/* Recent Searches dropdown */}
                 {showRecents && (
-                    <View
-                        style={{
-                            marginHorizontal: SPACING.screen,
-                            marginBottom: 12,
-                            backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
-                            borderRadius: RADIUS.lg,
-                            borderWidth: 1,
-                            borderColor: isDark ? COLORS.borderDark : COLORS.border,
-                            ...SHADOWS.md,
-                        }}
-                    >
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 10 }}>
-                            <Text style={{ fontFamily: FONTS.sansBold, fontSize: 12, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>
-                                Recent searches
+                    <View style={{
+                        position: 'absolute',
+                        top: 58,
+                        left: 24,
+                        right: 24,
+                        backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
+                        borderRadius: RADIUS.lg,
+                        borderWidth: 1,
+                        borderColor: isDark ? COLORS.borderDark : COLORS.border,
+                        zIndex: 200,
+                        ...SHADOWS.md,
+                    }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>
+                            <Text style={{ fontFamily: FONTS.sansBold, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                Recent
                             </Text>
-                            <TouchableOpacity
-                                onPress={async () => {
-                                    setRecentSearches([]);
-                                    await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
-                                }}
-                            >
-                                <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.primary }}>
-                                    Clear
-                                </Text>
+                            <TouchableOpacity onPress={async () => { setRecentSearches([]); await AsyncStorage.removeItem(RECENT_SEARCHES_KEY); setShowRecents(false); }}>
+                                <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.primary }}>Clear</Text>
                             </TouchableOpacity>
                         </View>
-                        {recentSearches.map((search, i) => (
+                        {recentSearches.map((s, i) => (
                             <TouchableOpacity
                                 key={i}
-                                onPress={() => {
-                                    setSearchQuery(search);
-                                    setShowRecents(false);
-                                    saveSearch(search);
-                                }}
+                                onPress={() => { setSearchQuery(s); setShowRecents(false); saveSearch(s); }}
                                 style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 }}
                             >
-                                <MaterialIcons name="history" size={16} color={COLORS.textMuted} />
-                                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 14, color: isDark ? COLORS.white : COLORS.textDark, marginLeft: 10 }}>
-                                    {search}
+                                <MaterialIcons name="history" size={15} color={COLORS.textMuted} />
+                                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 13, color: isDark ? COLORS.white : COLORS.textDark, marginLeft: 10 }}>
+                                    {s}
                                 </Text>
                             </TouchableOpacity>
                         ))}
                     </View>
                 )}
+            </Animated.View>
 
-                <CategoryChips activeCategory={activeCategory} onSelect={handleCategorySelect} />
-            </AnimatedSection>
+            {/* ── Divider under search ──────────────────────────────────────────── */}
+            <View style={{ height: 1, backgroundColor: isDark ? COLORS.borderDark : COLORS.border, marginHorizontal: 0 }} />
 
-            {/* Results Bar */}
-            <AnimatedSection
-                delay={200} direction="up" distance={20}
-                style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingHorizontal: SPACING.screen,
-                    paddingVertical: 10,
-                    backgroundColor: isDark ? COLORS.bgDark : COLORS.background,
-                }}
-            >
-                <TouchableOpacity
-                    onPress={() => setShowSort(true)}
-                    style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 4,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: RADIUS.full,
-                        backgroundColor: isDark ? COLORS.surfaceDark : COLORS.white,
-                        borderWidth: 1,
-                        borderColor: isDark ? COLORS.borderDark : COLORS.border,
-                    }}
-                >
-                    <MaterialIcons name="sort" size={14} color={COLORS.textMuted} />
-                    <Text style={{ fontFamily: FONTS.sansMedium, fontSize: 12, color: COLORS.textMuted }}>
-                        {sortLabel[sortBy]}
-                    </Text>
-                </TouchableOpacity>
-
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <TouchableOpacity
-                        onPress={() => { Haptics.selectionAsync(); setViewMode('grid'); }}
-                        style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: viewMode === 'grid' ? COLORS.primary : 'transparent' }}
-                    >
-                        <Ionicons name="grid" size={16} color={viewMode === 'grid' ? '#fff' : COLORS.textMuted} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        onPress={() => { Haptics.selectionAsync(); setViewMode('list'); }}
-                        style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: viewMode === 'list' ? COLORS.primary : 'transparent' }}
-                    >
-                        <Ionicons name="list" size={16} color={viewMode === 'list' ? '#fff' : COLORS.textMuted} />
-                    </TouchableOpacity>
-                </View>
-            </AnimatedSection>
-
-            {/* Service List */}
+            {/* ── Main FlatList ─────────────────────────────────────────────────── */}
             <FlatList
-                data={filteredServices}
+                data={displayServices}
                 keyExtractor={(item) => item.id}
-                numColumns={viewMode === 'grid' ? 2 : 1}
-                key={viewMode}
-                renderItem={({ item, index }) => <ServiceCard service={item} viewMode={viewMode} index={index} />}
-                contentContainerStyle={{ paddingBottom: 100, paddingTop: 4 }}
+                renderItem={({ item, index }) => <ServiceListCard service={item} index={index} focusKey={focusCount} />}
+                ListHeaderComponent={ListHeaderComponent}
+                contentContainerStyle={{ paddingBottom: 120 }}
                 showsVerticalScrollIndicator={false}
-                ListEmptyComponent={() => (
-                    <View className="items-center justify-center mt-20 px-8">
-                        <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: isDark ? COLORS.surfaceDark : COLORS.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                            <MaterialIcons name="search-off" size={32} color={COLORS.textMuted} />
+                onEndReached={() => {
+                    if (hasMore && !loadingMore && !searchQuery.trim()) loadMore();
+                }}
+                onEndReachedThreshold={0.4}
+                ListFooterComponent={
+                    loadingMore ? (
+                        <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                            <BrandedSpinner size="small" />
                         </View>
-                        <Text className="text-base" style={{ fontFamily: FONTS.montserratBold, color: isDark ? COLORS.white : COLORS.textDark, textAlign: 'center', marginBottom: 6 }}>
-                            No services found
-                        </Text>
-                        <Text style={{ fontFamily: FONTS.sansRegular, color: COLORS.textMuted, textAlign: 'center', fontSize: 14, lineHeight: 20 }}>
-                            Try adjusting your search or filters to find what you're looking for.
-                        </Text>
-                        <TouchableOpacity
-                            onPress={() => { setSearchQuery(''); setActiveCategory('All'); setSortBy('recommended'); }}
-                            style={{ marginTop: 20, paddingHorizontal: 20, paddingVertical: 10, backgroundColor: COLORS.primary, borderRadius: RADIUS.full }}
-                        >
-                            <Text style={{ fontFamily: FONTS.sansBold, color: '#fff', fontSize: 14 }}>
-                                Clear all filters
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
+                    ) : null
+                }
+                ListEmptyComponent={() => (
+                    loading ? (
+                        <View style={{ paddingTop: 60, alignItems: 'center' }}>
+                            <BrandedSpinner size="large" />
+                        </View>
+                    ) : (
+                        <View style={{ paddingTop: 16 }}>
+                            <EmptyState
+                                type="search"
+                                title={activeCategory !== 'All' ? `No ${activeCatInfo?.label ?? activeCategory} services yet` : 'No services found'}
+                                description={
+                                    activeCategory !== 'All'
+                                        ? 'Be the first to offer this service or try another category.'
+                                        : 'Try adjusting your search to find what you are looking for.'
+                                }
+                                primaryActionTitle={activeCategory !== 'All' ? 'Browse all categories' : undefined}
+                                onPrimaryAction={activeCategory !== 'All' ? handleClearCategory : undefined}
+                            />
+                        </View>
+                    )
                 )}
             />
 
-            {/* Sort Bottom Sheet */}
-            <SortSheet visible={showSort} current={sortBy} onSelect={setSortBy} onClose={() => setShowSort(false)} isDark={isDark} />
-            
             <Snackbar
                 visible={snackbar.visible}
                 message={snackbar.message}
                 type={snackbar.type as any}
                 onDismiss={() => setSnackbar({ ...snackbar, visible: false })}
             />
-        </View>
         </SafeAreaView>
     );
 };

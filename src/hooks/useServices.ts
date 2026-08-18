@@ -13,51 +13,89 @@ interface UseServicesOptions {
 interface UseServicesReturn {
   services: Service[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
   refetch: (forceRefresh?: boolean) => Promise<void>;
+  loadMore: () => Promise<void>;
   hasMore: boolean;
 }
 
+const PAGE_SIZE = 10;
+
 /**
- * Hook for fetching services with optional filters
+ * Hook for fetching services with optional filters and structured pagination
  */
 export const useServices = (options?: UseServicesOptions): UseServicesReturn => {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
+
+  // Memoize options values to avoid infinite loops if an object literal is passed
+  const category = options?.category;
+  const agentId = options?.agentId;
+  const limit = options?.limit || PAGE_SIZE;
 
   const fetchServices = useCallback(
-    async (forceRefresh: boolean = false) => {
+    async (isLoadMore: boolean = false, forceRefresh: boolean = false) => {
       try {
-        setLoading(true);
+        if (isLoadMore) {
+          setLoadingMore(true);
+        } else {
+          setLoading(true);
+        }
         setError(null);
+
+        const currentPage = isLoadMore ? page + 1 : 1;
+        const offset = (currentPage - 1) * limit;
+
         const data = await servicesApi.fetchServices({
-          ...options,
+          category,
+          agentId,
+          limit,
+          offset,
           forceRefresh,
         });
-        setServices(data as unknown as Service[]);
-        setHasMore((data?.length || 0) >= (options?.limit || 50));
+
+        const newServices = data as unknown as Service[];
+
+        if (isLoadMore) {
+          setServices((prev) => [...prev, ...newServices]);
+        } else {
+          setServices(newServices);
+        }
+
+        setPage(currentPage);
+        setHasMore(newServices.length >= limit);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch services';
         setError(message);
         console.error('[useServices] Error:', message);
       } finally {
         setLoading(false);
+        setLoadingMore(false);
       }
     },
-    [options]
+    [category, agentId, limit, page]
   );
 
   useEffect(() => {
-    fetchServices();
-  }, [fetchServices]);
+    fetchServices(false, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, agentId, limit]);
+
+  const refetch = useCallback((forceRefresh: boolean = false) => fetchServices(false, forceRefresh), [fetchServices]);
+  const loadMore = useCallback(() => fetchServices(true, false), [fetchServices]);
 
   return {
     services,
     loading,
+    loadingMore,
     error,
-    refetch: fetchServices,
+    refetch,
+    loadMore,
     hasMore,
   };
 };

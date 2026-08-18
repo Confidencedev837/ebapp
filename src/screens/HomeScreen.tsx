@@ -11,7 +11,7 @@ import {
     StyleSheet,
     ActivityIndicator,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,8 @@ import AgentStoryBubble from '@/components/AgentStoryBubble';
 import AvailableTodayCard from '@/components/AvailableTodayCard';
 import UpcomingBookingBanner from '@/components/UpcomingBookingBanner';
 import CategoryChips from '@/components/CategoryChips';
+import VerifiedBadge from '@/components/VerifiedBadge';
+import BrandedSpinner from '@/components/BrandedSpinner';
 import ServicePostCard from '@/components/ServicePostCard';
 import Snackbar from '@/components/Snackbar';
 import NotificationSheet from '@/components/NotificationSheet';
@@ -51,23 +53,28 @@ const HomeScreen = () => {
     // ── Notification sheet ────────────────────────────────────────────────
     const [notifSheetVisible, setNotifSheetVisible] = useState(false);
 
+    const [activeCategory, setActiveCategory] = useState('All');
+
     // ── Fetch real data ───────────────────────────────────────────────────
-    const { services, loading: servicesLoading, error: servicesError, refetch: refetchServices } = useServices();
-    const { bookings: upcomingBookingsData, error: bookingsError } = useUpcomingBookings(user?.id ?? profile?.id ?? null, 30);
+    const { 
+        services, 
+        loading: servicesLoading, 
+        loadingMore,
+        hasMore,
+        error: servicesError, 
+        refetch: refetchServices,
+        loadMore 
+    } = useServices({
+        category: activeCategory === 'All' ? undefined : activeCategory
+    });
+    
+    const { bookings: upcomingBookingsData, error: bookingsError, refetch: refetchUpcoming } = useUpcomingBookings(user?.id ?? profile?.id ?? null, 30);
 
-    // ── Pagination ────────────────────────────────────────────────────────
-    const [page, setPage] = useState(1);
-    const [loadingMore, setLoadingMore] = useState(false);
-
-    const loadMore = useCallback(() => {
-        if (loadingMore) return;
-        setLoadingMore(true);
-        // Simulate a brief delay for UX feel (in production replace with real API pagination)
-        setTimeout(() => {
-            setPage(prev => prev + 1);
-            setLoadingMore(false);
-        }, 600);
-    }, [loadingMore]);
+    useFocusEffect(
+        useCallback(() => {
+            refetchUpcoming();
+        }, [refetchUpcoming])
+    );
 
     // ── Snackbar state ────────────────────────────────────────────────────
     const [snackbar, setSnackbar] = useState({ visible: false, message: '', type: 'success' as 'success' | 'error' | 'info' });
@@ -80,11 +87,7 @@ const HomeScreen = () => {
         if (bookingsError) setSnackbar({ visible: true, message: bookingsError, type: 'error' });
     }, [bookingsError]);
 
-    const [activeCategory, setActiveCategory] = useState('All');
     const [refreshing, setRefreshing] = useState(false);
-
-    // Reset page when category changes
-    useEffect(() => { setPage(1); }, [activeCategory]);
 
     // ── Animated values ───────────────────────────────────────────────────
     const searchScale = useRef(new Animated.Value(1)).current;
@@ -114,20 +117,7 @@ const HomeScreen = () => {
         return () => scrollY.removeListener(id);
     }, []);
 
-    // ── Filtered + paginated services ─────────────────────────────────────
-    const filteredServices = useMemo(() =>
-        activeCategory === 'All'
-            ? services
-            : services.filter(s => s.category === activeCategory),
-        [activeCategory, services]
-    );
 
-    const pagedServices = useMemo(() =>
-        filteredServices.slice(0, page * PAGE_SIZE),
-        [filteredServices, page]
-    );
-
-    const hasMore = pagedServices.length < filteredServices.length;
 
     const handleCategorySelect = useCallback((category: string) => {
         Haptics.selectionAsync();
@@ -151,7 +141,6 @@ const HomeScreen = () => {
     const onRefresh = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setRefreshing(true);
-        setPage(1);
         Promise.all([refetchServices()])
             .then(() => setSnackbar({ visible: true, message: 'Refreshed', type: 'success' }))
             .catch(() => setSnackbar({ visible: true, message: 'Refresh failed', type: 'error' }))
@@ -259,18 +248,10 @@ const HomeScreen = () => {
 
                 {/* Location row */}
                 <AnimatedSection delay={200} direction="left" distance={20} style={styles.locationRow}>
-                    <MaterialIcons name="place" size={13} color={COLORS.primary} />
+                    <MaterialIcons name="place" size={14} color={COLORS.primary} />
                     <Text style={[styles.locationText, { color: COLORS.textMuted }]}>
-                        {profile?.location + ', Nigeria' || ''}
+                        {profile?.location ? `${profile.location}, Nigeria` : 'Lagos, Nigeria'}
                     </Text>
-                    {services.length > 0 && (
-                        <>
-                            <Text style={{ color: COLORS.border, fontSize: 12 }}>·</Text>
-                            <Text style={[styles.locationText, { color: COLORS.primary, fontFamily: FONTS.sansBold }]}>
-                                {services.length} services
-                            </Text>
-                        </>
-                    )}
                 </AnimatedSection>
             </Animated.View>
         </Animated.View>
@@ -279,17 +260,16 @@ const HomeScreen = () => {
     // ─── LIST HEADER ──────────────────────────────────────────────────────
     const listHeader = useMemo(() => (
         <View style={{ backgroundColor: isDark ? COLORS.bgDark : COLORS.white }}>
-            <AnimatedSection delay={300} direction="right" distance={30}>
-                <ProfileCompletionBanner />
-            </AnimatedSection>
-            
-            <AnimatedSection delay={400} direction="up" distance={20}>
+            <AnimatedSection delay={300} direction="up" distance={20}>
                 <CategoryChips activeCategory={activeCategory} onSelect={handleCategorySelect} />
             </AnimatedSection>
             
             {upcomingBooking && (
-                <AnimatedSection delay={500} direction="left" distance={30} style={{ marginBottom: 16, marginTop: 8 }}>
-                    <UpcomingBookingBanner booking={upcomingBooking} />
+                <AnimatedSection delay={400} direction="left" distance={30} style={{ marginBottom: 16, marginTop: 8 }}>
+                    <UpcomingBookingBanner
+                        booking={upcomingBooking}
+                        onPress={() => navigation.navigate('BookingDetail', { bookingId: upcomingBooking.id })}
+                    />
                 </AnimatedSection>
             )}
 
@@ -321,9 +301,9 @@ const HomeScreen = () => {
             <AnimatedSection delay={700} direction="up" distance={20} style={[styles.feedHeader, { borderColor: isDark ? COLORS.borderDark : COLORS.border }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Text style={[TYPOGRAPHY.label, { color: isDark ? COLORS.white : COLORS.textDark }]}>Services</Text>
-                    {filteredServices.length > 0 && (
+                    {services.length > 0 && (
                         <View style={[styles.countBadge, { backgroundColor: isDark ? COLORS.surfaceDark : COLORS.blush }]}>
-                            <Text style={[styles.countText, { color: COLORS.primary }]}>{filteredServices.length}</Text>
+                            <Text style={[styles.countText, { color: COLORS.primary }]}>{services.length}{hasMore ? '+' : ''}</Text>
                         </View>
                     )}
                 </View>
@@ -332,7 +312,7 @@ const HomeScreen = () => {
                 </TouchableOpacity>
             </AnimatedSection>
         </View>
-    ), [activeCategory, upcomingBooking, handleCategorySelect, filteredServices.length, isDark, navigation]);
+    ), [activeCategory, upcomingBooking, handleCategorySelect, services.length, isDark, navigation]);
 
     const renderServiceItem = useCallback(({ item, index }: { item: any, index: number }) => (
         <AnimatedSection delay={800 + index * 50} direction="up" distance={30}>
@@ -342,7 +322,7 @@ const HomeScreen = () => {
 
     // ─── PAGINATION FOOTER ────────────────────────────────────────────────
     const renderFooter = () => {
-        if (!hasMore && pagedServices.length > 0) {
+        if (!hasMore && services.length > 0) {
             return (
                 <View style={styles.footerEnd}>
                     <View style={[styles.footerLine, { backgroundColor: isDark ? COLORS.borderDark : COLORS.border }]} />
@@ -386,7 +366,7 @@ const HomeScreen = () => {
                 {renderHeader()}
 
                 <FlatList
-                    data={pagedServices}
+                    data={services}
                     keyExtractor={(item) => item.id}
                     ListHeaderComponent={listHeader}
                     renderItem={renderServiceItem}
@@ -415,8 +395,7 @@ const HomeScreen = () => {
                     ListEmptyComponent={
                         servicesLoading ? (
                             <View style={styles.emptyState}>
-                                <ActivityIndicator size="large" color={COLORS.primary} />
-                                <Text style={[TYPOGRAPHY.body, { color: COLORS.textMuted, marginTop: 12 }]}>Loading services...</Text>
+                                <BrandedSpinner size="large" showLabel labelText="Loading services..." />
                             </View>
                         ) : (
                             <View style={styles.emptyState}>

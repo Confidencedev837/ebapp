@@ -33,33 +33,21 @@ import { useScreenAnimation } from '@/hooks/useScreenAnimation';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// ── Constants ──────────────────────────────────────────────────────────────
+import { CATEGORY_META, SERVICE_DURATIONS, SERVICE_DURATION_LABELS } from '@/constants/categories';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-const CATEGORIES = [
-    { label: 'Hair Styling', value: 'Hair Styling', icon: 'content-cut' as const },
-    { label: 'Makeup Artistry', value: 'Makeup Artistry', icon: 'brush' as const },
-    { label: 'Nail Technician', value: 'Nail Technician', icon: 'spa' as const },
-    { label: 'Braiding & Locs', value: 'Braiding & Locs', icon: 'nature' as const },
-    { label: 'Lash & Brow', value: 'Lash & Brow', icon: 'visibility' as const },
-    { label: 'Barbering', value: 'Barbering', icon: 'face' as const },
-    { label: 'Skincare & Facials', value: 'Skincare & Facials', icon: 'face-retouching-natural' as const },
-    { label: 'Spa & Massage', value: 'Spa & Massage', icon: 'self-improvement' as const },
-    { label: 'Waxing', value: 'Waxing', icon: 'cleaning-services' as const },
-    { label: 'Bridal Beauty', value: 'Bridal Beauty', icon: 'diamond' as const },
-];
+// ── Constants derived from single source of truth ─────────────────────────
 
-const DURATION_OPTIONS = [
-    { label: '15 minutes', value: 15 },
-    { label: '30 minutes', value: 30 },
-    { label: '45 minutes', value: 45 },
-    { label: '1 hour', value: 60 },
-    { label: '1.5 hours', value: 90 },
-    { label: '2 hours', value: 120 },
-    { label: '3 hours', value: 180 },
-    { label: '4 hours', value: 240 },
-    { label: 'Half day (5 hrs)', value: 300 },
-    { label: 'Full day (8 hrs)', value: 480 },
-];
+const CATEGORIES = CATEGORY_META.map((c) => ({
+    label: c.label,
+    value: c.key,
+    icon: c.icon,
+}));
+
+const DURATION_OPTIONS = SERVICE_DURATIONS.map((mins) => ({
+    label: SERVICE_DURATION_LABELS[mins] || `${mins} minutes`,
+    value: mins,
+}));
 
 const STEPS = ['Basics', 'Details', 'Media', 'Review'];
 
@@ -158,8 +146,8 @@ const PickerModal = ({
                                 >
                                     {item.icon && (
                                         <View style={[styles.optionIcon, { backgroundColor: isSelected ? COLORS.primary + '20' : (isDark ? '#2D2D2D' : COLORS.surface) }]}>
-                                            <MaterialIcons
-                                                name={item.icon}
+                                            <MaterialCommunityIcons
+                                                name={item.icon as any}
                                                 size={18}
                                                 color={isSelected ? COLORS.primary : COLORS.textMuted}
                                             />
@@ -330,6 +318,30 @@ const CreateServiceScreen: React.FC = () => {
 
     // Step management
     const [currentStep, setCurrentStep] = useState(0);
+
+    // Customer Guard
+    if (profile?.user_type !== 'agent') {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: isDark ? COLORS.bgDark : COLORS.background, justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+                <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: `${COLORS.primary}15`, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                    <MaterialIcons name="lock" size={32} color={COLORS.primary} />
+                </View>
+                <Text style={{ fontFamily: FONTS.playfairBold, fontSize: 20, color: isDark ? COLORS.white : COLORS.textDark, textAlign: 'center', marginBottom: 8 }}>
+                    Specialist Feature Only
+                </Text>
+                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 14, color: COLORS.textMuted, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+                    Publishing beauty services is exclusively available to verified specialists and agents.
+                </Text>
+                <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    style={{ backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: RADIUS.full }}
+                    activeOpacity={0.8}
+                >
+                    <Text style={{ fontFamily: FONTS.sansBold, fontSize: 14, color: '#FFF' }}>Go Back</Text>
+                </TouchableOpacity>
+            </SafeAreaView>
+        );
+    }
     const stepAnim = useRef(new Animated.Value(0)).current;
     const progressAnim = useRef(new Animated.Value(0)).current;
     const scrollRef = useRef<ScrollView>(null);
@@ -435,7 +447,7 @@ const CreateServiceScreen: React.FC = () => {
     // ── Validation ───────────────────────────────────────────────────────
 
     const step1Valid = name.trim().length >= 3 && category && price.trim() && durationMins !== null;
-    const step2Valid = description.trim().length >= 20;
+    const step2Valid = description.trim().length >= 20 && (whatToExpect.trim().length === 0 || whatToExpect.trim().length >= 20);
     const step3Valid = true; // images optional
 
     const canNext = [step1Valid, step2Valid, step3Valid, false];
@@ -578,7 +590,7 @@ const CreateServiceScreen: React.FC = () => {
             </View>
 
             <TextField
-                label="Description"
+                label="Description (Min 20 chars)"
                 icon="description"
                 placeholder="Describe your service in detail. What makes it special?"
                 value={description}
@@ -587,6 +599,11 @@ const CreateServiceScreen: React.FC = () => {
                 isDark={isDark}
                 maxLength={500}
             />
+            {description.trim().length > 0 && description.trim().length < 20 && (
+                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.error, marginLeft: 4, marginTop: -16, marginBottom: 16 }}>
+                    Description must be at least 20 characters (currently {description.trim().length})
+                </Text>
+            )}
 
             {/* Key Benefits */}
             <View style={{ marginBottom: 20 }}>
@@ -625,7 +642,7 @@ const CreateServiceScreen: React.FC = () => {
 
             {/* What to Expect */}
             <TextField
-                label="What to Expect"
+                label="What to Expect (Min 20 chars)"
                 icon="auto-awesome"
                 placeholder="Walk clients through the experience — e.g. consultation, preparation, aftercare..."
                 value={whatToExpect}
@@ -634,6 +651,11 @@ const CreateServiceScreen: React.FC = () => {
                 isDark={isDark}
                 maxLength={400}
             />
+            {whatToExpect.trim().length > 0 && whatToExpect.trim().length < 20 && (
+                <Text style={{ fontFamily: FONTS.sansRegular, fontSize: 11, color: COLORS.error, marginLeft: 4, marginTop: -16, marginBottom: 16 }}>
+                    Please write at least 20 characters (currently {whatToExpect.trim().length})
+                </Text>
+            )}
         </View>
     );
 
@@ -921,7 +943,17 @@ const CreateServiceScreen: React.FC = () => {
                                 animateToStep(currentStep + 1);
                             } else {
                                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                                showToast('Please fill in all required fields to proceed.', 'warning', 4000);
+                                let errorMsg = 'Please fill in all required fields to proceed.';
+                                if (currentStep === 0) {
+                                    if (name.trim().length < 3) errorMsg = 'Service name must be at least 3 characters.';
+                                    else if (!category) errorMsg = 'Please select a service category.';
+                                    else if (!price.trim()) errorMsg = 'Please enter a valid price.';
+                                    else if (durationMins === null) errorMsg = 'Please select a duration.';
+                                } else if (currentStep === 1) {
+                                    if (description.trim().length < 20) errorMsg = 'Description must be at least 20 characters.';
+                                    else if (whatToExpect.trim().length > 0 && whatToExpect.trim().length < 20) errorMsg = 'What to expect must be at least 20 characters if provided.';
+                                }
+                                showToast(errorMsg, 'warning', 4000);
                             }
                         }}
                         activeOpacity={0.85}

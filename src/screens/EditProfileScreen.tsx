@@ -41,6 +41,8 @@ const EditProfileScreen = () => {
 
     const [loading, setLoading] = useState(false);
     const [avatarUriLocal, setAvatarUriLocal] = useState<string | null>(null);
+    const [bannerUriLocal, setBannerUriLocal] = useState<string | null>(null);
+    const [isBannerDeleted, setIsBannerDeleted] = useState(false);
     const [licenseUriLocal, setLicenseUriLocal] = useState<string | null>(null);
 
     // Form state
@@ -63,6 +65,12 @@ const EditProfileScreen = () => {
         if (!profile?.id) return;
         if (!fullName.trim()) {
             setSnackbar({ visible: true, message: 'Full name is required', type: 'error' });
+            return;
+        }
+
+        const phoneStr = phone.trim().replace(/\s/g, '');
+        if (phoneStr && !/^\d{11}$/.test(phoneStr)) {
+            setSnackbar({ visible: true, message: 'Phone number must be exactly 11 digits', type: 'error' });
             return;
         }
 
@@ -93,14 +101,35 @@ const EditProfileScreen = () => {
                 updates['avatar_url'] = publicUrlData.publicUrl;
             }
 
-            // Upload license if selected (agents only)
+            // Upload banner if a new one was selected
+            if (bannerUriLocal) {
+                const extMatch = bannerUriLocal.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+                const ext = extMatch?.[1]?.toLowerCase() || 'jpg';
+                const filename = `banners/${profile.id}/banner-${Date.now()}.${ext}`;
+                const storagePath = await uploadToStorage('avatars', filename, bannerUriLocal);
+                const { data: publicUrlData } = getPublicStorageUrl('avatars', storagePath);
+                updates['banner_url'] = publicUrlData.publicUrl;
+            } else if (isBannerDeleted) {
+                updates['banner_url'] = null;
+            }
+
+            // Upload license / certificate if selected (agents only)
             if (isAgent && licenseUriLocal) {
                 const extMatch = licenseUriLocal.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
                 const ext = extMatch?.[1]?.toLowerCase() || 'jpg';
-                const filename = `licenses/${profile.id}/license-${Date.now()}.${ext}`;
-                const storagePath = await uploadToStorage('licenses', filename, licenseUriLocal);
-                const { data: publicUrlData } = getPublicStorageUrl('licenses', storagePath);
+                const filename = `certificates/${profile.id}/cert-${Date.now()}.${ext}`;
+                let storagePath: string;
+                let bucketUsed = 'avatars';
+                try {
+                    storagePath = await uploadToStorage('certificates', filename, licenseUriLocal);
+                    bucketUsed = 'certificates';
+                } catch {
+                    storagePath = await uploadToStorage('avatars', filename, licenseUriLocal);
+                    bucketUsed = 'avatars';
+                }
+                const { data: publicUrlData } = getPublicStorageUrl(bucketUsed, storagePath);
                 updates['license_url'] = publicUrlData.publicUrl;
+                updates['certificate_url'] = publicUrlData.publicUrl;
             }
 
             const { data, error } = await supabase
@@ -142,6 +171,14 @@ const EditProfileScreen = () => {
     };
 
     const handlePickAvatar = async () => pickFromLibrary((uri) => setAvatarUriLocal(uri));
+    const handlePickBanner = async () => {
+        setIsBannerDeleted(false);
+        pickFromLibrary((uri) => setBannerUriLocal(uri));
+    };
+    const handleDeleteBanner = () => {
+        setBannerUriLocal(null);
+        setIsBannerDeleted(true);
+    };
     const handlePickLicense = async () => pickFromLibrary((uri) => setLicenseUriLocal(uri));
 
     const { animStyle } = useScreenAnimation();
@@ -178,6 +215,35 @@ const EditProfileScreen = () => {
                                 ? "Complete your portfolio details, skills, and license documentation to acquire verified status and gain bookings."
                                 : "Add your phone number, location, and style preferences to get recommended local artists instantly."}
                         </Text>
+                    </View>
+
+                    {/* Banner Upload */}
+                    <View style={{ marginBottom: 24 }}>
+                        <Text style={[styles.sectionHeading, { color: COLORS.primary, marginHorizontal: 20 }]}>Profile Banner</Text>
+                        <View style={{ marginHorizontal: 20, height: 120, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: surface, borderWidth: 1, borderColor: border, justifyContent: 'center', alignItems: 'center' }}>
+                            {(!isBannerDeleted && (bannerUriLocal || profile?.banner_url)) ? (
+                                <>
+                                    <Image 
+                                        source={{ uri: bannerUriLocal || profile?.banner_url || '' }} 
+                                        style={StyleSheet.absoluteFill} 
+                                        contentFit="cover" 
+                                    />
+                                    <View style={{ position: 'absolute', flexDirection: 'row', gap: 10 }}>
+                                        <TouchableOpacity onPress={handlePickBanner} style={{ backgroundColor: 'rgba(0,0,0,0.6)', padding: 10, borderRadius: 20 }}>
+                                            <MaterialIcons name="edit" size={20} color="white" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={handleDeleteBanner} style={{ backgroundColor: 'rgba(255,0,0,0.6)', padding: 10, borderRadius: 20 }}>
+                                            <MaterialIcons name="delete" size={20} color="white" />
+                                        </TouchableOpacity>
+                                    </View>
+                                </>
+                            ) : (
+                                <TouchableOpacity onPress={handlePickBanner} style={{ alignItems: 'center' }}>
+                                    <MaterialIcons name="add-photo-alternate" size={32} color={muted} />
+                                    <Text style={{ fontFamily: FONTS.sansMedium, color: muted, marginTop: 8 }}>Add Banner Image</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
                     </View>
 
                     {/* Avatar Upload */}

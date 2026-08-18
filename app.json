@@ -23,7 +23,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F04272"
       },
-      "package": "com.everythingbeauty.app"
+      "package": "com.everythingbeauty.app",
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "favicon": "./assets/icon.png"

@@ -162,7 +162,7 @@ export const fetchUserFollowing = async (targetUserId: string, currentUserId: st
 export const fetchUserLikedServices = async (userId: string): Promise<Service[]> => {
     try {
         const { data, error } = await supabase
-            .from('favorites')
+            .from('service_likes')
             .select(`
                 service_id,
                 services:service_id (
@@ -176,7 +176,7 @@ export const fetchUserLikedServices = async (userId: string): Promise<Service[]>
                     )
                 )
             `)
-            .eq('customer_id', userId);
+            .eq('user_id', userId);
 
         if (error) throw error;
         if (!data) return [];

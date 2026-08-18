@@ -1,6 +1,9 @@
 // Everything Beauty — design system constants
 // Single source of truth for colors, fonts, spacing, and border radius
 
+// BlurHash for image placeholders (Soft pink/gradient matching branding)
+export const UNIVERSAL_BLURHASH = 'LUN#1e}?ysOYS2WXRjS~}tM{%2j@';
+
 export const COLORS = {
     // Brand Pinks
     primary: '#FF6289',        // main buttons, active states, accents

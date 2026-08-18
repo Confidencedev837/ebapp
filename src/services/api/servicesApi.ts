@@ -1,6 +1,6 @@
 // src/services/api/servicesApi.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../supabase';
+import { supabase, removeFromStorage } from '../supabase';
 import { ServiceRow, ServiceInsert, ServiceUpdate } from '@/types/supabase';
 
 const SERVICES_CACHE_KEY = 'services_cache';
@@ -229,6 +229,30 @@ export const updateService = async (
  */
 export const deleteService = async (serviceId: string): Promise<void> => {
   try {
+    // 1. Fetch the service to get its image URLs
+    const { data: service, error: fetchError } = await supabase
+      .from('services')
+      .select('image_url')
+      .eq('id', serviceId)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
+
+    // 2. Delete images from storage
+    if (service?.image_url && Array.isArray(service.image_url)) {
+      const pathsToDelete = service.image_url
+        .map(url => {
+          const parts = url.split('service-images/');
+          return parts.length > 1 ? parts[1] : null;
+        })
+        .filter(Boolean) as string[];
+
+      for (const path of pathsToDelete) {
+        await removeFromStorage('service-images', path).catch(err => console.warn('Failed to delete image:', err));
+      }
+    }
+
+    // 3. Delete the database row
     const { error } = await supabase
       .from('services')
       .delete()

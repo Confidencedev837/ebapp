@@ -53,6 +53,8 @@ const BottomTabNavigator = () => {
     const { profile } = useUserStore();
     const isDark = theme === 'dark';
 
+    const isAgent = profile?.user_type === 'agent';
+
     return (
         <Tab.Navigator
             screenOptions={{
@@ -60,6 +62,7 @@ const BottomTabNavigator = () => {
                 tabBarInactiveTintColor: isDark ? '#6C6C6C' : COLORS.textMuted,
                 headerShown: false,
                 tabBarShowLabel: true,
+                tabBarHideOnKeyboard: true,
                 tabBarStyle: {
                     backgroundColor: isDark ? '#111111' : COLORS.white,
                     borderTopColor: isDark ? COLORS.borderDark : COLORS.border,
@@ -72,10 +75,10 @@ const BottomTabNavigator = () => {
                     fontSize: 10,
                     marginTop: 2,
                 },
-                // Prevent white flash on tab switches in dark mode
-                sceneStyle: {
-                    backgroundColor: isDark ? COLORS.bgDark : COLORS.background,
-                },
+            }}
+            // Prevent white flash on tab switches in dark mode
+            sceneContainerStyle={{
+                backgroundColor: isDark ? COLORS.bgDark : COLORS.background,
             }}
         >
             <Tab.Screen
@@ -92,23 +95,25 @@ const BottomTabNavigator = () => {
                 component={ServicesScreen}
                 options={{
                     tabBarIcon: ({ color }) => (
-                        <MaterialIcons name="auto-awesome" color={color} size={26} />
+                        <MaterialIcons name="spa" color={color} size={26} />
                     ),
                 }}
             />
 
-            {/* ── 5th Create Tab — centered raised button ── */}
-            <Tab.Screen
-                name="Create"
-                component={CreateServiceScreen}
-                options={{
-                    tabBarLabel: () => null,
-                    tabBarIcon: () => null,
-                    tabBarButton: (props) => (
-                        <CreateTabButton onPress={() => props.onPress?.({} as any)} />
-                    ),
-                }}
-            />
+            {/* ── Create Tab — visible only for registered Specialists/Agents ── */}
+            {isAgent && (
+                <Tab.Screen
+                    name="Create"
+                    component={CreateServiceScreen}
+                    options={{
+                        tabBarLabel: () => null,
+                        tabBarIcon: () => null,
+                        tabBarButton: (props) => (
+                            <CreateTabButton onPress={() => props.onPress?.({} as any)} />
+                        ),
+                    }}
+                />
+            )}
 
             <Tab.Screen
                 name="Agents"

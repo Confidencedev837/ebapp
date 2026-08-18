@@ -16,7 +16,9 @@ import { getAvatarUrl } from '@/services/avatarUtils';
 import { Service } from '@/types';
 import { FollowUserItem, BookedServiceItem } from '@/services/api/profileTabsApi';
 import { followAgent, unfollowAgent } from '@/services/api/followsApi';
+import { formatTime12Hour, formatFriendlyDate } from '@/utils/timeFormat';
 import { useNavigation } from '@react-navigation/native';
+import BrandedSpinner from '@/components/BrandedSpinner';
 import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -65,7 +67,7 @@ export const AgentPostsGridTab: React.FC<{
     if (loading) {
         return (
             <View style={styles.tabLoadingWrap}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="medium" />
             </View>
         );
     }
@@ -141,7 +143,7 @@ export const BookedServicesTab: React.FC<{
     if (loading) {
         return (
             <View style={styles.tabLoadingWrap}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="medium" />
             </View>
         );
     }
@@ -235,7 +237,7 @@ export const BookedServicesTab: React.FC<{
                                 <View style={styles.dateMetaRow}>
                                     <MaterialIcons name="schedule" size={13} color={COLORS.textMuted} />
                                     <Text style={[styles.dateMetaTxt, { color: COLORS.textMuted }]}>
-                                        {b.date} · {b.time}
+                                        {formatFriendlyDate(b.date)} · {formatTime12Hour(b.time)}
                                     </Text>
                                 </View>
                                 {b.total_amount && (
@@ -294,7 +296,7 @@ export const FollowListTab: React.FC<{
     if (loading) {
         return (
             <View style={styles.tabLoadingWrap}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="medium" />
             </View>
         );
     }
@@ -411,7 +413,7 @@ export const LikedPostsTab: React.FC<{
     if (loading) {
         return (
             <View style={styles.tabLoadingWrap}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="medium" />
             </View>
         );
     }

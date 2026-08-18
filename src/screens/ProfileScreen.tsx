@@ -25,6 +25,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/services/supabase';
 import ProfileCompletionBanner from '@/components/ProfileCompletionBanner';
 import ProfileTopMenu from '@/components/profile/ProfileTopMenu';
+import BrandedSpinner from '@/components/BrandedSpinner';
 import {
     AgentPostsGridTab,
     BookedServicesTab,
@@ -145,7 +146,7 @@ export const ProfileScreen = () => {
     if (!user) {
         return (
             <SafeAreaView style={[styles.centered, { backgroundColor: isDark ? COLORS.bgDark : COLORS.background }]}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <BrandedSpinner size="large" showLabel labelText="Loading profile..." />
             </SafeAreaView>
         );
     }

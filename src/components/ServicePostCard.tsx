@@ -14,12 +14,15 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Service } from '@/types';
 import VerifiedBadge from './VerifiedBadge';
 import { getAvatarUrl } from '@/services/avatarUtils';
-import { COLORS, FONTS, RADIUS, SHADOWS } from '@/constants/theme';
+import { COLORS, FONTS, RADIUS, SHADOWS, UNIVERSAL_BLURHASH } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
 import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { followAgent, unfollowAgent, checkIsFollowing } from '@/services/api/followsApi';
 import { useUserStore } from '@/store/useUserStore';
+import { useLike } from '@/hooks/useLike';
+import { useFavorite } from '@/hooks/useFavorite';
+import { useShare } from '@/hooks/useShare';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -41,8 +44,11 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
     const { user } = useUserStore();
     const isDark = theme === 'dark';
 
-    const [isLiked, setIsLiked] = useState(false);
-    const [isBookmarked, setIsBookmarked] = useState(false);
+    // ── Real Supabase-backed interactions ────────────────────────────────
+    const { isLiked, likeCount, toggleLike } = useLike(service.id);
+    const { isFavorited, toggleFavorite } = useFavorite(service.id);
+    const { share, isSharing } = useShare(service);
+
     const [isFollowing, setIsFollowing] = useState(false);
     const [followLoading, setFollowLoading] = useState(false);
     const [descExpanded, setDescExpanded] = useState(false);
@@ -112,7 +118,8 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
                     source={{ uri: mediaList[0] }}
                     style={styles.mediaSingle}
                     contentFit="cover"
-                    transition={300}
+                    placeholder={{ blurhash: UNIVERSAL_BLURHASH }}
+                    transition={500}
                 />
             );
         }
@@ -120,9 +127,9 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
         if (count === 2) {
             return (
                 <View style={styles.mediaRow}>
-                    <Image source={{ uri: mediaList[0] }} style={styles.mediaHalf} contentFit="cover" transition={300} />
+                    <Image source={{ uri: mediaList[0] }} style={styles.mediaHalf} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                     <View style={styles.mediaDivider} />
-                    <Image source={{ uri: mediaList[1] }} style={styles.mediaHalf} contentFit="cover" transition={300} />
+                    <Image source={{ uri: mediaList[1] }} style={styles.mediaHalf} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                 </View>
             );
         }
@@ -130,12 +137,12 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
         if (count === 3) {
             return (
                 <View style={styles.mediaRow}>
-                    <Image source={{ uri: mediaList[0] }} style={styles.mediaMainLeft} contentFit="cover" transition={300} />
+                    <Image source={{ uri: mediaList[0] }} style={styles.mediaMainLeft} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                     <View style={styles.mediaDivider} />
                     <View style={styles.mediaStackedRight}>
-                        <Image source={{ uri: mediaList[1] }} style={styles.mediaStackedTop} contentFit="cover" transition={300} />
+                        <Image source={{ uri: mediaList[1] }} style={styles.mediaStackedTop} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                         <View style={styles.mediaDividerH} />
-                        <Image source={{ uri: mediaList[2] }} style={styles.mediaStackedTop} contentFit="cover" transition={300} />
+                        <Image source={{ uri: mediaList[2] }} style={styles.mediaStackedTop} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                     </View>
                 </View>
             );
@@ -144,15 +151,15 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
         // 4+
         return (
             <View style={styles.mediaRow}>
-                <Image source={{ uri: mediaList[0] }} style={styles.mediaMainLeft} contentFit="cover" transition={300} />
+                <Image source={{ uri: mediaList[0] }} style={styles.mediaMainLeft} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                 <View style={styles.mediaDivider} />
                 <View style={styles.mediaStackedRight}>
-                    <Image source={{ uri: mediaList[1] }} style={styles.mediaStackedTop} contentFit="cover" transition={300} />
+                    <Image source={{ uri: mediaList[1] }} style={styles.mediaStackedTop} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                     <View style={styles.mediaDividerH} />
-                    <Image source={{ uri: mediaList[2] }} style={styles.mediaStackedTop} contentFit="cover" transition={300} />
+                    <Image source={{ uri: mediaList[2] }} style={styles.mediaStackedTop} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                     <View style={styles.mediaDividerH} />
                     <View style={styles.mediaStackedTopExtra}>
-                        <Image source={{ uri: mediaList[3] }} style={StyleSheet.absoluteFill} contentFit="cover" transition={300} />
+                        <Image source={{ uri: mediaList[3] }} style={StyleSheet.absoluteFill} contentFit="cover" placeholder={{ blurhash: UNIVERSAL_BLURHASH }} transition={500} />
                         {count > 4 && (
                             <View style={styles.moreOverlay}>
                                 <Text style={styles.moreOverlayText}>+{count - 3}</Text>
@@ -289,9 +296,10 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
             <View style={[styles.actionBar, { borderTopColor: isDark ? COLORS.borderDark : COLORS.border }]}>
                 {/* Left actions */}
                 <View style={styles.actionLeft}>
+                    {/* Like button with count */}
                     <TouchableOpacity
                         style={styles.actionBtn}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsLiked(v => !v); }}
+                        onPress={toggleLike}
                     >
                         <MaterialIcons
                             name={isLiked ? 'favorite' : 'favorite-border'}
@@ -299,10 +307,17 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
                             color={isLiked ? COLORS.primary : (isDark ? COLORS.white : COLORS.textDark)}
                         />
                     </TouchableOpacity>
+                    {likeCount > 0 && (
+                        <Text style={[styles.countLabel, { color: isDark ? COLORS.textMutedDark : COLORS.textMuted }]}>
+                            {likeCount}
+                        </Text>
+                    )}
 
+                    {/* Share button */}
                     <TouchableOpacity
-                        style={styles.actionBtn}
-                        onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                        style={[styles.actionBtn, { opacity: isSharing ? 0.5 : 1 }]}
+                        onPress={share}
+                        disabled={isSharing}
                     >
                         <MaterialIcons
                             name="share"
@@ -316,12 +331,12 @@ const ServicePostCard: React.FC<Props> = React.memo(({ service }) => {
                 <View style={styles.actionRight}>
                     <TouchableOpacity
                         style={styles.actionBtn}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setIsBookmarked(v => !v); }}
+                        onPress={toggleFavorite}
                     >
                         <MaterialIcons
-                            name={isBookmarked ? 'bookmark' : 'bookmark-border'}
+                            name={isFavorited ? 'bookmark' : 'bookmark-border'}
                             size={24}
-                            color={isBookmarked ? COLORS.primary : (isDark ? COLORS.white : COLORS.textDark)}
+                            color={isFavorited ? COLORS.primary : (isDark ? COLORS.white : COLORS.textDark)}
                         />
                     </TouchableOpacity>
 
@@ -590,6 +605,12 @@ const styles = StyleSheet.create({
         fontFamily: FONTS.montserratBold,
         fontSize: 13,
         color: COLORS.white,
+    },
+    countLabel: {
+        fontFamily: FONTS.sansBold,
+        fontSize: 12,
+        marginLeft: 2,
+        marginRight: 4,
     },
 });
 

@@ -115,6 +115,42 @@ export const hasCustomerReviewedService = async (
 };
 
 /**
+ * Check if a booking has already been reviewed.
+ * Requires the 20240818_reviews_booking_link.sql migration to be applied in Supabase.
+ * Falls back to customer_id + service_id check if booking_id column does not exist yet.
+ */
+export const hasCustomerReviewedBooking = async (
+  bookingId: string,
+  fallback?: { customerId: string; serviceId: string }
+): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from('reviews')
+      .select('id', { count: 'exact' })
+      .eq('booking_id', bookingId);
+
+    if (error) {
+      // Column doesn't exist yet (migration not applied) — fall back gracefully
+      if (error.code === '42703' && fallback) {
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('reviews')
+          .select('id', { count: 'exact' })
+          .eq('customer_id', fallback.customerId)
+          .eq('service_id', fallback.serviceId);
+
+        if (fallbackError) throw fallbackError;
+        return (fallbackData?.length || 0) > 0;
+      }
+      throw error;
+    }
+    return (data?.length || 0) > 0;
+  } catch (error) {
+    console.error('[reviewsApi] hasCustomerReviewedBooking error:', error);
+    return false; // Default to false so the user is not blocked from reviewing
+  }
+};
+
+/**
  * Delete review (customer only)
  */
 export const deleteReview = async (reviewId: string): Promise<void> => {

@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons'; // For the '+' icon
 import { Profile } from '@/types';
 import OnlineIndicator from './OnlineIndicator';
-import { getAvatarUrl } from '@/services/avatarUtils';
+import { getAvatarUrl, isOnline } from '@/services/avatarUtils';
 import { COLORS, FONTS, RADIUS } from '@/constants/theme';
 import { useTheme } from '@/context/ThemeContext';
 
@@ -21,11 +21,6 @@ const AgentStoryBubble: React.FC<Props> = React.memo(({ agent, isCurrentUser }) 
     const navigation = useNavigation<any>();
     const { theme } = useTheme();
     const isDark = theme === 'dark';
-    const isOnline = (lastSeen: string | null | undefined): boolean => {
-        if (!lastSeen) return false;
-        return Date.now() - new Date(lastSeen).getTime() < 5 * 60 * 1000;
-    };
-
     const online = isOnline(agent?.last_seen);
     const firstName = agent?.full_name?.split(' ')[0] || "You";
 
@@ -94,10 +89,10 @@ const AgentStoryBubble: React.FC<Props> = React.memo(({ agent, isCurrentUser }) 
                     </View>
                 )}
 
-                {/* 🟢 Online Status Dot (Only for others) */}
-                {!isCurrentUser && online && (
-                    <View className="absolute bottom-1 right-1 border-2 border-white rounded-full">
-                        <OnlineIndicator />
+                {/* Online status dot — passes lastSeen so OnlineIndicator controls visibility */}
+                {!isCurrentUser && (
+                    <View style={{ position: 'absolute', bottom: 2, right: 2 }}>
+                        <OnlineIndicator lastSeen={agent?.last_seen} size={10} />
                     </View>
                 )}
             </View>

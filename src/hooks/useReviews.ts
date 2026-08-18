@@ -86,20 +86,22 @@ export const useCreateReview = () => {
   const [error, setError] = useState<string | null>(null);
 
   const createReview = useCallback(
-    async (data: {
-      customerId: string;
-      serviceId: string;
-      rating: number;
-      comment?: string;
-    }): Promise<Review | null> => {
-      try {
-        setLoading(true);
-        setError(null);
-        const result = await reviewsApi.createReview({
-          customer_id: data.customerId,
-          service_id: data.serviceId,
-          rating: data.rating,
-          comment: data.comment || null,
+      async (data: {
+        customerId: string;
+        serviceId: string;
+        bookingId: string;
+        rating: number;
+        comment?: string;
+      }): Promise<Review | null> => {
+        try {
+          setLoading(true);
+          setError(null);
+          const result = await reviewsApi.createReview({
+            customer_id: data.customerId,
+            service_id: data.serviceId,
+            booking_id: data.bookingId,
+            rating: data.rating,
+            comment: data.comment || null,
         });
         return result as unknown as Review;
       } catch (err) {
@@ -148,6 +150,43 @@ export const useHasReviewed = (customerId: string | null, serviceId: string | nu
   }, [check]);
 
   return { hasReviewed, loading, error };
+};
+
+/**
+ * Hook for checking if a booking has already been reviewed
+ */
+export const useHasReviewedBooking = (
+  bookingId: string | null,
+  fallback?: { customerId: string; serviceId: string }
+) => {
+  const [hasReviewed, setHasReviewed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const check = useCallback(async () => {
+    if (!bookingId) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await reviewsApi.hasCustomerReviewedBooking(bookingId, fallback);
+      setHasReviewed(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to check booking review';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [bookingId, fallback?.customerId, fallback?.serviceId]);
+
+  React.useEffect(() => {
+    check();
+  }, [check]);
+
+  return { hasReviewed, loading, error, refetch: check };
 };
 
 /**

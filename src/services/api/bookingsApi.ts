@@ -1,6 +1,7 @@
 // src/services/api/bookingsApi.ts
 import { supabase } from '../supabase';
 import { BookingRow, BookingInsert, BookingUpdate } from '@/types/supabase';
+import { sendRemotePushNotification, scheduleReminderNotification } from '../notificationService';
 
 /**
  * Create a new booking
@@ -14,6 +15,74 @@ export const createBooking = async (booking: BookingInsert): Promise<BookingRow>
       .single();
 
     if (error) throw error;
+
+    // --- Notifications & Reminders ---
+    try {
+      // 1. Fetch Agent's push token
+      const { data: serviceData } = await supabase
+        .from('services')
+        .select('name, agent_id, profiles!agent_id(push_token)')
+        .eq('id', booking.service_id)
+        .single() as any;
+
+      const agentPushToken = serviceData?.profiles?.push_token;
+      const serviceName = serviceData?.name || 'a service';
+
+      // bookingId from the newly created row
+      const createdBookingId = data.id;
+      const bookingNavData = { screen: 'BookingDetail', params: { bookingId: createdBookingId } };
+
+      if (agentPushToken) {
+        // Agent taps this -> goes to their BookingDetail to Accept/Reject
+        await sendRemotePushNotification(
+          agentPushToken,
+          'New Booking Request',
+          `You have a new booking request for ${serviceName}. Tap to review.`,
+          bookingNavData
+        );
+      }
+
+      // 2. Schedule Local Reminders for the Customer (the current device)
+      if (booking.date && booking.time) {
+        const bookingDateTime = new Date(`${booking.date}T${booking.time}`);
+        const reminderData = { screen: 'BookingDetail', params: { bookingId: createdBookingId } };
+
+        // 1 hour before
+        await scheduleReminderNotification(
+          'Upcoming Appointment',
+          `Your ${serviceName} appointment is in 1 hour.`,
+          new Date(bookingDateTime.getTime() - 60 * 60 * 1000),
+          reminderData
+        );
+
+        // 30 mins before
+        await scheduleReminderNotification(
+          'Upcoming Appointment',
+          `Your ${serviceName} appointment is in 30 minutes.`,
+          new Date(bookingDateTime.getTime() - 30 * 60 * 1000),
+          reminderData
+        );
+
+        // 10 mins before
+        await scheduleReminderNotification(
+          'Appointment Starting Soon',
+          `Your ${serviceName} appointment is in 10 minutes.`,
+          new Date(bookingDateTime.getTime() - 10 * 60 * 1000),
+          reminderData
+        );
+
+        // Exact start time
+        await scheduleReminderNotification(
+          'Service Started',
+          `Your ${serviceName} appointment is starting now.`,
+          bookingDateTime,
+          reminderData
+        );
+      }
+    } catch (notifErr) {
+      console.warn('[bookingsApi] Failed to send notifications:', notifErr);
+    }
+
     return data;
   } catch (error) {
     console.error('[bookingsApi] createBooking error:', error);
@@ -142,6 +211,70 @@ export const updateBookingStatus = async (
       .single();
 
     if (error) throw error;
+
+    // --- Notifications & Reminders ---
+    try {
+      // Fetch full booking details to get customer token, agent details, etc.
+      const { data: bookingDetails } = await supabase
+        .from('bookings')
+        .select(`
+          date, time,
+          services ( name ),
+          profiles!customer_id ( push_token )
+        `)
+        .eq('id', bookingId)
+        .single() as any;
+
+      const customerPushToken = bookingDetails?.profiles?.push_token;
+      const serviceName = bookingDetails?.services?.name || 'your service';
+      const bookingNavData = { screen: 'BookingDetail', params: { bookingId } };
+
+      if (status === 'confirmed') {
+        if (customerPushToken) {
+          // Customer taps this -> goes to BookingDetail to see confirmation details
+          await sendRemotePushNotification(
+            customerPushToken,
+            'Booking Confirmed',
+            `Your booking for ${serviceName} has been confirmed. Tap to view details.`,
+            bookingNavData
+          );
+        }
+
+        // Schedule Local Reminders for the Agent (the current device confirming it)
+        if (bookingDetails?.date && bookingDetails?.time) {
+          const bookingDateTime = new Date(`${bookingDetails.date}T${bookingDetails.time}`);
+          const reminderData = { screen: 'BookingDetail', params: { bookingId } };
+
+          await scheduleReminderNotification('Upcoming Service', `Your appointment for ${serviceName} is in 1 hour.`, new Date(bookingDateTime.getTime() - 60 * 60 * 1000), reminderData);
+          await scheduleReminderNotification('Upcoming Service', `Your appointment for ${serviceName} is in 30 minutes.`, new Date(bookingDateTime.getTime() - 30 * 60 * 1000), reminderData);
+          await scheduleReminderNotification('Service Starting Soon', `Your appointment for ${serviceName} is in 10 minutes.`, new Date(bookingDateTime.getTime() - 10 * 60 * 1000), reminderData);
+          await scheduleReminderNotification('Service Started', `Your appointment for ${serviceName} is starting now.`, bookingDateTime, reminderData);
+        }
+      } else if (status === 'completed') {
+        if (customerPushToken) {
+          // Customer taps this -> goes to BookingDetail where they can leave a review
+          await sendRemotePushNotification(
+            customerPushToken,
+            'Service Completed',
+            `Your ${serviceName} service is complete. Tap to leave a review.`,
+            bookingNavData
+          );
+        }
+      } else if (status === 'rejected' || status === 'cancelled') {
+        if (customerPushToken) {
+          // Customer taps this -> goes to BookingDetail to see what happened
+          await sendRemotePushNotification(
+            customerPushToken,
+            'Booking Update',
+            `Your booking for ${serviceName} was ${status}. Tap to view details.`,
+            bookingNavData
+          );
+        }
+      }
+    } catch (notifErr) {
+      console.warn('[bookingsApi] Failed to send status update notification:', notifErr);
+    }
+
     return data;
   } catch (error) {
     console.error('[bookingsApi] updateBookingStatus error:', error);
@@ -200,15 +333,16 @@ export const fetchUpcomingBookings = async (
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('*')
+      .select('*, services:service_id(*, profiles:agent_id(*))')
       .eq('customer_id', customerId)
       .gte('date', today)
       .lte('date', futureDate)
-      .in('status', ['pending', 'confirmed'])
-      .order('date', { ascending: true });
+      .in('status', ['pending', 'confirmed', 'in_progress'])
+      .order('date', { ascending: true })
+      .order('time', { ascending: true });
 
     if (error) throw error;
-    return data || [];
+    return (data || []) as unknown as BookingRow[];
   } catch (error) {
     console.error('[bookingsApi] fetchUpcomingBookings error:', error);
     throw error;

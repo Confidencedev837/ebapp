@@ -1,6 +1,6 @@
 // src/navigation/RootNavigator.tsx - Root routing logic with auth state listener
 import React, { useEffect } from 'react';
-import { View, Text, ActivityIndicator } from 'react-native';
+import { View, Text, AppState, AppStateStatus } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useFonts, Montserrat_800ExtraBold } from '@expo-google-fonts/montserrat';
 import { supabase } from '../services/supabase';
@@ -24,6 +24,7 @@ import NotificationsScreen from '@/screens/NotificationsScreen';
 import SettingsScreen from '@/screens/SettingsScreen';
 import NetworkSnackbar from '@/components/NetworkSnackbar';
 import { registerForPushNotificationsAsync } from '@/services/notificationService';
+import BrandedSpinner from '@/components/BrandedSpinner';
 
 const Stack = createNativeStackNavigator();
 
@@ -32,7 +33,9 @@ const SplashScreen = () => (
         <Text style={{ color: '#FF6289', fontSize: 32, fontFamily: 'Montserrat_800ExtraBold' }}>
             Everything Beauty
         </Text>
-        <ActivityIndicator color="#ee4670" size="large" style={{ marginTop: 20 }} />
+        <View style={{ marginTop: 24 }}>
+            <BrandedSpinner size="large" />
+        </View>
     </View>
 );
 
@@ -69,7 +72,9 @@ const RootNavigator = () => {
         }
     };
 
-    // Heartbeat to update last_seen online presence
+    // Presence heartbeat — updates last_seen so other users see accurate online status.
+    // Fires immediately on mount, every 90s while active, and whenever the app
+    // returns to foreground from background (AppState change).
     useEffect(() => {
         if (!user?.id) return;
 
@@ -80,26 +85,40 @@ const RootNavigator = () => {
                     .update({ last_seen: new Date().toISOString() })
                     .eq('id', user.id);
             } catch (err) {
-                console.warn('[RootNavigator] Failed to update presence heartbeat:', err);
+                console.warn('[RootNavigator] Presence heartbeat failed:', err);
             }
         };
 
+        // Fire immediately on mount
         updatePresence();
-        const interval = setInterval(updatePresence, 120000); // every 2 minutes
-        return () => clearInterval(interval);
+
+        // Regular interval every 90s (online threshold is 4 min = 2.6 heartbeat cycles)
+        const interval = setInterval(updatePresence, 90_000);
+
+        // Also fire when app returns to foreground so there is never a
+        // stale last_seen from a long background session
+        const handleAppState = (nextState: AppStateStatus) => {
+            if (nextState === 'active') updatePresence();
+        };
+        const sub = AppState.addEventListener('change', handleAppState);
+
+        return () => {
+            clearInterval(interval);
+            sub.remove();
+        };
     }, [user?.id]);
 
     useEffect(() => {
         let isMounted = true;
 
         const initSession = async () => {
-            // Safety timeout: if everything hangs (e.g. Supabase unreachable), stop loading after 6s
+            // Safety timeout: if everything hangs (e.g. Supabase unreachable), stop loading after 10s
             const timeout = setTimeout(() => {
                 if (isMounted) {
                     console.warn('[RootNavigator] Session init timed out — stopping loading');
                     setLoading(false);
                 }
-            }, 6000);
+            }, 10000);
 
             try {
                 const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -155,7 +174,19 @@ const RootNavigator = () => {
 
                 if (currentSession) {
                     setUser(currentSession.user);
-                    await fetchProfile(currentSession.user.id);
+
+                    // Only re-fetch the full profile on genuine sign-in events.
+                    // TOKEN_REFRESHED and USER_UPDATED do not require a full profile
+                    // re-fetch and calling setLoading(true) here would show the
+                    // splash screen mid-session (causing the stuck loading bug after
+                    // onboarding completes).
+                    const isFreshSignIn = event === 'SIGNED_IN' || event === 'INITIAL_SESSION';
+                    const alreadyHasProfile = useUserStore.getState().profile !== null;
+
+                    if (isFreshSignIn && !alreadyHasProfile) {
+                        await fetchProfile(currentSession.user.id);
+                    }
+
                     subscribeToProfile(currentSession.user.id);
                 } else {
                     setUser(null);
